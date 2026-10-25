@@ -4,6 +4,7 @@ import {
   getWeekMondayByOffset,
   mergeAdjacentSameActivityBlocks,
   adjustNeighborsForBlockUpdate,
+  isPastDayInWeek,
 } from '../store/usePlannerStore';
 import {
   DAYS_OF_WEEK,
@@ -28,6 +29,7 @@ import {
   ChevronUp,
   ChevronDown,
   Move,
+  Lock,
 } from 'lucide-react';
 
 const HOUR_WIDTH_PX = 120; // 120px per hour -> 2px per minute (30px per 15 mins, 60px per 30 mins)
@@ -401,7 +403,12 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
         const dayRowEl = elUnderPointer?.closest('[data-day-row-index]') as HTMLElement | null;
         if (dayRowEl && dayRowEl.dataset.dayRowIndex !== undefined) {
           const parsedDay = Number(dayRowEl.dataset.dayRowIndex);
-          if (!Number.isNaN(parsedDay) && parsedDay >= 0 && parsedDay <= 6) {
+          if (
+            !Number.isNaN(parsedDay) &&
+            parsedDay >= 0 &&
+            parsedDay <= 6 &&
+            !isPastDayInWeek(selectedWeekOffset, parsedDay)
+          ) {
             targetDayIndex = parsedDay;
           }
         }
@@ -524,6 +531,11 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
       return;
     }
 
+    // 已過去的日期（跨過午夜 00:00 後）自動鎖定，禁止放置新積木
+    if (isPastDayInWeek(selectedWeekOffset, dayIndex)) {
+      return;
+    }
+
     const snappedStart = computeSnappedMinuteFromEvent(
       e.clientX,
       e.currentTarget,
@@ -555,6 +567,7 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
   ) => {
     e.preventDefault();
     setHoverPreview(null);
+    if (isPastDayInWeek(selectedWeekOffset, dayIndex)) return;
     const rawData = e.dataTransfer.getData('application/kids-activity-template');
     if (!rawData) return;
 
@@ -819,107 +832,134 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
             </span>
           </div>
 
-          {/* 直接移到其他天（一鍵點選週一～週日直接搬移） */}
-          <div className="flex items-center gap-1 flex-wrap bg-white px-2.5 py-1 rounded-xl border border-blue-200 shadow-2xs">
-            <span className="font-black text-blue-900 inline-flex items-center gap-1 mr-1">
-              <ArrowRightLeft className="w-3.5 h-3.5 text-blue-600" />
-              直接移到其他天：
-            </span>
-            {DAYS_OF_WEEK.map((d) => {
-              const isCurrentDay = selectedBlock.dayIndex === d.index;
-              return (
-                <button
-                  key={d.index}
-                  type="button"
-                  disabled={isCurrentDay}
-                  onClick={() => moveBlockToDay(selectedBlock.id, d.index)}
-                  className={`px-2 py-0.5 rounded-lg font-black transition ${
-                    isCurrentDay
-                      ? 'bg-blue-600 text-white cursor-default'
-                      : 'bg-slate-100 hover:bg-amber-500 hover:text-white text-slate-700 cursor-pointer'
-                  }`}
-                  title={
-                    isCurrentDay
-                      ? `目前位於${d.short}`
-                      : `將「${selectedBlock.name}」直接移到${d.short}`
-                  }
-                >
-                  {d.short}
-                </button>
-              );
-            })}
-          </div>
+          {isPastDayInWeek(selectedWeekOffset, selectedBlock.dayIndex) ? (
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="px-3 py-1 rounded-xl bg-slate-200 text-slate-700 font-black inline-flex items-center gap-1.5">
+                <Lock className="w-3.5 h-3.5 text-slate-600 shrink-0" />
+                <span>
+                  此日期（{DAYS_OF_WEEK[selectedBlock.dayIndex]?.short}{' '}
+                  {formatMonthDay(weekMonday, selectedBlock.dayIndex)}）已經過完，積木已自動鎖定不可修改或刪除
+                </span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setSelectedBlockId(null)}
+                className="px-2 py-1 text-slate-500 hover:text-slate-800 font-bold cursor-pointer"
+                title="取消選取此積木"
+              >
+                ✕
+              </button>
+            </div>
+          ) : (
+            <>
+              {/* 直接移到其他天（一鍵點選週一～週日直接搬移；已過去的日期鎖定不可移入） */}
+              <div className="flex items-center gap-1 flex-wrap bg-white px-2.5 py-1 rounded-xl border border-blue-200 shadow-2xs">
+                <span className="font-black text-blue-900 inline-flex items-center gap-1 mr-1">
+                  <ArrowRightLeft className="w-3.5 h-3.5 text-blue-600" />
+                  直接移到其他天：
+                </span>
+                {DAYS_OF_WEEK.map((d) => {
+                  const isCurrentDay = selectedBlock.dayIndex === d.index;
+                  const isTargetPast = isPastDayInWeek(selectedWeekOffset, d.index);
+                  return (
+                    <button
+                      key={d.index}
+                      type="button"
+                      disabled={isCurrentDay || isTargetPast}
+                      onClick={() => moveBlockToDay(selectedBlock.id, d.index)}
+                      className={`px-2 py-0.5 rounded-lg font-black transition ${
+                        isCurrentDay
+                          ? 'bg-blue-600 text-white cursor-default'
+                          : isTargetPast
+                          ? 'bg-slate-100 text-slate-300 cursor-not-allowed line-through'
+                          : 'bg-slate-100 hover:bg-amber-500 hover:text-white text-slate-700 cursor-pointer'
+                      }`}
+                      title={
+                        isCurrentDay
+                          ? `目前位於${d.short}`
+                          : isTargetPast
+                          ? `${d.short}已過完鎖定，不可移入`
+                          : `將「${selectedBlock.name}」直接移到${d.short}`
+                      }
+                    >
+                      {d.short}
+                    </button>
+                  );
+                })}
+              </div>
 
-          {/* 提早/延後時間 + 調整時長 + 刪除按鈕 */}
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <button
-              type="button"
-              onClick={() => {
-                const nextStart = Math.max(0, selectedBlock.startMinute - snapMinutes);
-                updateBlock(selectedBlock.id, { startMinute: nextStart }, true);
-              }}
-              className="px-2 py-1 bg-white border border-slate-300 rounded-lg font-black hover:bg-slate-100 cursor-pointer"
-              title={`將開始時間提早 ${snapMinutes} 分鐘`}
-            >
-              ◀ 提早{snapMinutes}分
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                const nextStart = Math.min(
-                  1440 - selectedBlock.durationMinutes,
-                  selectedBlock.startMinute + snapMinutes
-                );
-                updateBlock(selectedBlock.id, { startMinute: nextStart }, true);
-              }}
-              className="px-2 py-1 bg-white border border-slate-300 rounded-lg font-black hover:bg-slate-100 cursor-pointer"
-              title={`將開始時間延後 ${snapMinutes} 分鐘`}
-            >
-              延後{snapMinutes}分 ▶
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                const nextDur = Math.max(
-                  snapMinutes,
-                  selectedBlock.durationMinutes - snapMinutes
-                );
-                updateBlock(selectedBlock.id, { durationMinutes: nextDur }, true);
-              }}
-              className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg font-black hover:bg-slate-100 cursor-pointer"
-            >
-              時長-{snapMinutes}分
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                const nextDur = Math.min(
-                  1440 - selectedBlock.startMinute,
-                  selectedBlock.durationMinutes + snapMinutes
-                );
-                updateBlock(selectedBlock.id, { durationMinutes: nextDur }, true);
-              }}
-              className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg font-black hover:bg-slate-100 cursor-pointer"
-            >
-              時長+{snapMinutes}分
-            </button>
-            <button
-              type="button"
-              onClick={() => removeBlock(selectedBlock.id)}
-              className="inline-flex items-center gap-1 px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-black transition cursor-pointer"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              刪除積木
-            </button>
-            <button
-              type="button"
-              onClick={() => setSelectedBlockId(null)}
-              className="px-2 py-1 text-slate-500 hover:text-slate-800 font-bold cursor-pointer"
-              title="取消選取此積木"
-            >
-              ✕
-            </button>
-          </div>
+              {/* 提早/延後時間 + 調整時長 + 刪除按鈕 */}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextStart = Math.max(0, selectedBlock.startMinute - snapMinutes);
+                    updateBlock(selectedBlock.id, { startMinute: nextStart }, true);
+                  }}
+                  className="px-2 py-1 bg-white border border-slate-300 rounded-lg font-black hover:bg-slate-100 cursor-pointer"
+                  title={`將開始時間提早 ${snapMinutes} 分鐘`}
+                >
+                  ◀ 提早{snapMinutes}分
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextStart = Math.min(
+                      1440 - selectedBlock.durationMinutes,
+                      selectedBlock.startMinute + snapMinutes
+                    );
+                    updateBlock(selectedBlock.id, { startMinute: nextStart }, true);
+                  }}
+                  className="px-2 py-1 bg-white border border-slate-300 rounded-lg font-black hover:bg-slate-100 cursor-pointer"
+                  title={`將開始時間延後 ${snapMinutes} 分鐘`}
+                >
+                  延後{snapMinutes}分 ▶
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextDur = Math.max(
+                      snapMinutes,
+                      selectedBlock.durationMinutes - snapMinutes
+                    );
+                    updateBlock(selectedBlock.id, { durationMinutes: nextDur }, true);
+                  }}
+                  className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg font-black hover:bg-slate-100 cursor-pointer"
+                >
+                  時長-{snapMinutes}分
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextDur = Math.min(
+                      1440 - selectedBlock.startMinute,
+                      selectedBlock.durationMinutes + snapMinutes
+                    );
+                    updateBlock(selectedBlock.id, { durationMinutes: nextDur }, true);
+                  }}
+                  className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg font-black hover:bg-slate-100 cursor-pointer"
+                >
+                  時長+{snapMinutes}分
+                </button>
+                <button
+                  type="button"
+                  onClick={() => removeBlock(selectedBlock.id)}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-black transition cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  刪除積木
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedBlockId(null)}
+                  className="px-2 py-1 text-slate-500 hover:text-slate-800 font-bold cursor-pointer"
+                  title="取消選取此積木"
+                >
+                  ✕
+                </button>
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -1025,8 +1065,14 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
               .sort((a, b) => a.startMinute - b.startMinute);
             const isWeekend = day.index >= 5;
             const dateStr = formatMonthDay(weekMonday, day.index);
+            const isPastDay = isPastDayInWeek(selectedWeekOffset, day.index);
+            const isSelectedFromPast =
+              selectedBlock && isPastDayInWeek(selectedWeekOffset, selectedBlock.dayIndex);
             const canMoveSelectedHere =
-              Boolean(selectedBlock) && selectedBlock!.dayIndex !== day.index;
+              Boolean(selectedBlock) &&
+              selectedBlock!.dayIndex !== day.index &&
+              !isPastDay &&
+              !isSelectedFromPast;
 
             return (
               <div
@@ -1039,21 +1085,25 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
                   data-day-left-header="true"
                   style={{ width: `${DAY_COL_WIDTH_PX}px` }}
                   onClick={() => {
-                    if (selectedBlock && selectedBlock.dayIndex !== day.index) {
+                    if (canMoveSelectedHere && selectedBlock) {
                       moveBlockToDay(selectedBlock.id, day.index);
                     }
                   }}
                   title={
-                    canMoveSelectedHere
-                      ? `點擊將「${selectedBlock?.name}」直接移到${day.short}`
-                      : `${day.full} (${dateStr})`
+                    isPastDay
+                      ? `${day.full} (${dateStr}) 已過完，積木已鎖定唯讀`
+                      : canMoveSelectedHere
+                        ? `點擊將「${selectedBlock?.name}」直接移到${day.short}`
+                        : `${day.full} (${dateStr})`
                   }
                   className={`sticky left-0 z-20 shrink-0 border-r-2 border-amber-200 px-2 flex flex-col items-center justify-center shadow-2xs transition ${
-                    canMoveSelectedHere
-                      ? 'bg-blue-50/90 hover:bg-blue-100 cursor-pointer ring-1 ring-inset ring-blue-300'
-                      : isWeekend
-                        ? 'bg-rose-50'
-                        : 'bg-white'
+                    isPastDay
+                      ? 'bg-slate-100/95 text-slate-500'
+                      : canMoveSelectedHere
+                        ? 'bg-blue-50/90 hover:bg-blue-100 cursor-pointer ring-1 ring-inset ring-blue-300'
+                        : isWeekend
+                          ? 'bg-rose-50'
+                          : 'bg-white'
                   }`}
                 >
                   <div className="text-sm font-black text-slate-800">
@@ -1061,15 +1111,26 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
                   </div>
                   <span
                     className={`text-[11px] font-black tabular-nums ${
-                      isWeekend ? 'text-rose-600' : 'text-amber-700'
+                      isPastDay
+                        ? 'text-slate-500'
+                        : isWeekend
+                          ? 'text-rose-600'
+                          : 'text-amber-700'
                     }`}
                   >
                     {dateStr}
                   </span>
-                  {canMoveSelectedHere && (
-                    <span className="mt-0.5 px-1.5 py-0.2 rounded bg-blue-600 text-white text-[9px] font-black">
-                      移至此日
+                  {isPastDay ? (
+                    <span className="mt-0.5 px-1.5 py-0.2 rounded bg-slate-200 text-slate-600 text-[9px] font-black inline-flex items-center gap-0.5">
+                      <Lock className="w-2.5 h-2.5" />
+                      已鎖定
                     </span>
+                  ) : (
+                    canMoveSelectedHere && (
+                      <span className="mt-0.5 px-1.5 py-0.2 rounded bg-blue-600 text-white text-[9px] font-black">
+                        移至此日
+                      </span>
+                    )
                   )}
                 </div>
 
@@ -1099,7 +1160,7 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
                   }}
                   onClick={(e) => handleEmptySlotClick(e, day.index)}
                   onMouseMove={(e) => {
-                    if (dragState || !activeTemplate) {
+                    if (isPastDay || dragState || !activeTemplate) {
                       if (hoverPreview) setHoverPreview(null);
                       return;
                     }
@@ -1116,6 +1177,7 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
                   }}
                   onDragOver={(e) => {
                     e.preventDefault();
+                    if (isPastDay) return;
                     const snapped = computeSnappedMinuteFromEvent(
                       e.clientX,
                       e.currentTarget,
@@ -1125,11 +1187,13 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
                   }}
                   onDrop={(e) => handleDropOnDayRow(e, day.index)}
                   className={`relative flex-1 h-full overflow-hidden ${
-                    activeTemplate
-                      ? 'cursor-copy'
-                      : isGrabPanning
-                        ? 'cursor-grabbing'
-                        : 'cursor-grab'
+                    isPastDay
+                      ? 'cursor-not-allowed opacity-85'
+                      : activeTemplate
+                        ? 'cursor-copy'
+                        : isGrabPanning
+                          ? 'cursor-grabbing'
+                          : 'cursor-grab'
                   }`}
                   style={{ width: `${TOTAL_WIDTH_PX}px` }}
                 >
@@ -1204,6 +1268,7 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
                       <PuzzleBlockItem
                         key={block.id}
                         block={block}
+                        isLocked={isPastDay}
                         isSelected={selectedBlockId === block.id}
                         isDragging={
                           dragState?.blockId === block.id && dragState.hasExceededThreshold
@@ -1215,6 +1280,7 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
                           setPreviewTimeMinutes(block.startMinute);
                         }}
                         onStartInteraction={(mode, clientX, clientY) => {
+                          if (isPastDay) return;
                           lastBlockInteractionTimeRef.current = Date.now();
                           setSelectedBlockId(block.id);
                           setPreviewTimeMinutes(block.startMinute);
@@ -1245,6 +1311,7 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
 
 interface PuzzleBlockItemProps {
   block: ScheduleBlock;
+  isLocked?: boolean;
   isSelected: boolean;
   isDragging: boolean;
   isConnectedLeft: boolean;
@@ -1259,6 +1326,7 @@ interface PuzzleBlockItemProps {
 
 const PuzzleBlockItem: React.FC<PuzzleBlockItemProps> = ({
   block,
+  isLocked = false,
   isSelected,
   isDragging,
   isConnectedLeft,
@@ -1279,6 +1347,10 @@ const PuzzleBlockItem: React.FC<PuzzleBlockItemProps> = ({
         onSelect();
       }}
       onPointerDown={(e) => {
+        if (isLocked) {
+          onSelect();
+          return;
+        }
         // 在平板觸控 (touch) 模式下，點按積木本體中間保留給瀏覽器原生上下／左右捲動畫面，避免手指滑過睡眠或上課積木時卡住無法捲動！
         if (e.pointerType === 'touch') {
           onSelect();
@@ -1298,27 +1370,31 @@ const PuzzleBlockItem: React.FC<PuzzleBlockItemProps> = ({
         backgroundColor: block.color,
         touchAction: 'pan-x pan-y',
       }}
-      className={`timeline-puzzle-block text-white flex items-center justify-between select-none cursor-grab active:cursor-grabbing ${
-        isConnectedLeft ? 'is-connected-left' : ''
-      } ${isConnectedRight ? 'is-connected-right' : ''} ${
+      className={`timeline-puzzle-block text-white flex items-center justify-between select-none ${
+        isLocked ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'
+      } ${isConnectedLeft ? 'is-connected-left' : ''} ${
+        isConnectedRight ? 'is-connected-right' : ''
+      } ${
         isSelected
           ? 'ring-2 ring-amber-300 ring-offset-1 z-20 brightness-105'
           : 'z-10 hover:brightness-105'
       } ${isDragging ? 'opacity-95 shadow-xl z-30 scale-[1.01]' : ''}`}
     >
-      {/* Left Resize Handle (Requires 8px deliberate drag threshold) */}
-      <div
-        data-resize-handle="left"
-        onPointerDown={(e) => {
-          if (e.button !== 0 && e.pointerType === 'mouse') return;
-          e.stopPropagation();
-          onStartInteraction('resize-left', e.clientX, e.clientY);
-        }}
-        title="按住左右拖曳調整開始時間"
-        className="w-3 sm:w-3.5 h-full flex items-center justify-center cursor-ew-resize bg-black/15 hover:bg-black/35 rounded-l-[9px] shrink-0 touch-none"
-      >
-        <GripVertical className="w-2.5 h-2.5 text-white/85 pointer-events-none" />
-      </div>
+      {/* Left Resize Handle (Requires 8px deliberate drag threshold; hidden when day is locked) */}
+      {!isLocked && (
+        <div
+          data-resize-handle="left"
+          onPointerDown={(e) => {
+            if (e.button !== 0 && e.pointerType === 'mouse') return;
+            e.stopPropagation();
+            onStartInteraction('resize-left', e.clientX, e.clientY);
+          }}
+          title="按住左右拖曳調整開始時間"
+          className="w-3 sm:w-3.5 h-full flex items-center justify-center cursor-ew-resize bg-black/15 hover:bg-black/35 rounded-l-[9px] shrink-0 touch-none"
+        >
+          <GripVertical className="w-2.5 h-2.5 text-white/85 pointer-events-none" />
+        </div>
+      )}
 
       {/* Center Content: Strictly Single-Line Chinese + Vertical Zhuyin + Time Range */}
       <div className="flex-1 min-w-0 px-1.5 py-0.5 flex items-center gap-1.5 overflow-hidden pointer-events-none">
@@ -1351,19 +1427,21 @@ const PuzzleBlockItem: React.FC<PuzzleBlockItemProps> = ({
         </div>
       </div>
 
-      {/* Right Resize Handle (Requires 8px deliberate drag threshold) */}
-      <div
-        data-resize-handle="right"
-        onPointerDown={(e) => {
-          if (e.button !== 0 && e.pointerType === 'mouse') return;
-          e.stopPropagation();
-          onStartInteraction('resize-right', e.clientX, e.clientY);
-        }}
-        title="按住左右拖曳調整結束時間與時長"
-        className="w-3 sm:w-3.5 h-full flex items-center justify-center cursor-ew-resize bg-black/15 hover:bg-black/35 rounded-r-[9px] shrink-0 touch-none"
-      >
-        <GripVertical className="w-2.5 h-2.5 text-white/85 pointer-events-none" />
-      </div>
+      {/* Right Resize Handle (Requires 8px deliberate drag threshold; hidden when day is locked) */}
+      {!isLocked && (
+        <div
+          data-resize-handle="right"
+          onPointerDown={(e) => {
+            if (e.button !== 0 && e.pointerType === 'mouse') return;
+            e.stopPropagation();
+            onStartInteraction('resize-right', e.clientX, e.clientY);
+          }}
+          title="按住左右拖曳調整結束時間與時長"
+          className="w-3 sm:w-3.5 h-full flex items-center justify-center cursor-ew-resize bg-black/15 hover:bg-black/35 rounded-r-[9px] shrink-0 touch-none"
+        >
+          <GripVertical className="w-2.5 h-2.5 text-white/85 pointer-events-none" />
+        </div>
+      )}
     </div>
   );
 };

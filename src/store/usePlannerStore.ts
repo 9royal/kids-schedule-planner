@@ -109,6 +109,27 @@ export function resolveDateToWeekOffsetAndDay(targetDate: Date): {
 }
 
 /**
+ * 取得今日對應的星期索引 (0=週一 .. 6=週日)
+ */
+export function getTodayDayIndex(baseDate = new Date()): number {
+  const jsDay = baseDate.getDay();
+  return jsDay === 0 ? 6 : jsDay - 1;
+}
+
+/**
+ * 判斷指定週次與星期是否已經過完（跨過午夜 00:00 後，已過去的那一天即自動鎖定不可修改）
+ */
+export function isPastDayInWeek(
+  weekOffset: number,
+  dayIndex: number,
+  baseDate = new Date()
+): boolean {
+  if (weekOffset < 0) return true;
+  if (weekOffset > 0) return false;
+  return dayIndex < getTodayDayIndex(baseDate);
+}
+
+/**
  * 自動整併同一天中「相同活動且時間相連（或重疊）」的兩個積木為單一積木
  */
 export function mergeAdjacentSameActivityBlocks(
@@ -1427,6 +1448,13 @@ export const usePlannerStore = create<PlannerStore>((setState, getState) => {
       const targetBlock = state.schedule.find((b) => b.id === blockId);
       if (!targetBlock || targetBlock.dayIndex === targetDayIndex) return;
       if (targetDayIndex < 0 || targetDayIndex > 6) return;
+      // 禁止將已過期日期的積木移出，或將積木移入已過期的日期
+      if (
+        isPastDayInWeek(state.selectedWeekOffset, targetBlock.dayIndex) ||
+        isPastDayInWeek(state.selectedWeekOffset, targetDayIndex)
+      ) {
+        return;
+      }
 
       getState().pushUndoSnapshot();
 
@@ -1502,8 +1530,15 @@ export const usePlannerStore = create<PlannerStore>((setState, getState) => {
     },
 
     addBlock: (newBlockData) => {
-      getState().pushUndoSnapshot();
       const state = getState();
+      // 已過去的日期鎖定不可新增積木
+      if (isPastDayInWeek(state.selectedWeekOffset, newBlockData.dayIndex)) {
+        return {
+          ...newBlockData,
+          id: `locked-${Date.now()}`,
+        };
+      }
+      getState().pushUndoSnapshot();
       const block: ScheduleBlock = {
         ...newBlockData,
         id: `blk-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -1586,10 +1621,20 @@ export const usePlannerStore = create<PlannerStore>((setState, getState) => {
     },
 
     updateBlock: (id, updates, autoMerge = false) => {
+      const state = getState();
+      const existingBlock = state.schedule.find((b) => b.id === id);
+      if (!existingBlock) return;
+      // 已過去的日期鎖定不可調整積木時間或時長，亦不可拖移至已過去的日期
+      if (
+        isPastDayInWeek(state.selectedWeekOffset, existingBlock.dayIndex) ||
+        (typeof updates.dayIndex === 'number' &&
+          isPastDayInWeek(state.selectedWeekOffset, updates.dayIndex))
+      ) {
+        return;
+      }
       if (autoMerge) {
         getState().pushUndoSnapshot();
       }
-      const state = getState();
       const nextSchedule = adjustNeighborsForBlockUpdate(
         state.schedule,
         id,
@@ -1614,8 +1659,14 @@ export const usePlannerStore = create<PlannerStore>((setState, getState) => {
     },
 
     removeBlock: (id) => {
-      getState().pushUndoSnapshot();
       const state = getState();
+      const existingBlock = state.schedule.find((b) => b.id === id);
+      if (!existingBlock) return;
+      // 已過去的日期鎖定不可刪除積木
+      if (isPastDayInWeek(state.selectedWeekOffset, existingBlock.dayIndex)) {
+        return;
+      }
+      getState().pushUndoSnapshot();
       const nextSchedule = state.schedule.filter((b) => b.id !== id);
       const activeWeekKey = getWeekKeyByOffset(state.selectedWeekOffset);
       const nextSchedulesByWeek = {
@@ -1664,7 +1715,7 @@ export const usePlannerStore = create<PlannerStore>((setState, getState) => {
       let firstImportedOffset: number | null = null;
 
       for (const { weekOffset, block } of items) {
-        if (weekOffset < 0) continue; // 忽略前一週及更早的歷史活動
+        if (weekOffset < 0 || isPastDayInWeek(weekOffset, block.dayIndex)) continue; // 忽略已過去的週次與已過完的日期
         if (firstImportedOffset === null) firstImportedOffset = weekOffset;
         const wkKey = getWeekKeyByOffset(weekOffset);
         const existingWeekBlocks = nextSchedulesByWeek[wkKey]
@@ -1739,10 +1790,22 @@ export const usePlannerStore = create<PlannerStore>((setState, getState) => {
       getState().pushUndoSnapshot();
       const state = getState();
       const starter = createStarterSchedule();
+      // 若為當週，保留已過期日期的原本紀錄，僅還原今日與未來日期的範本課表
+      const mergedStarter =
+        state.selectedWeekOffset === 0
+          ? [
+              ...state.schedule.filter((b) =>
+                isPastDayInWeek(state.selectedWeekOffset, b.dayIndex)
+              ),
+              ...starter.filter(
+                (b) => !isPastDayInWeek(state.selectedWeekOffset, b.dayIndex)
+              ),
+            ]
+          : starter;
       const activeWeekKey = getWeekKeyByOffset(state.selectedWeekOffset);
       const nextSchedulesByWeek = {
         ...state.schedulesByWeek,
-        [activeWeekKey]: starter,
+        [activeWeekKey]: mergedStarter,
       };
       setState({ selectedBlockId: null });
       persistAndSyncStudent(
@@ -1758,8 +1821,9 @@ export const usePlannerStore = create<PlannerStore>((setState, getState) => {
     },
 
     clearDaySchedule: (dayIndex) => {
-      getState().pushUndoSnapshot();
       const state = getState();
+      if (isPastDayInWeek(state.selectedWeekOffset, dayIndex)) return;
+      getState().pushUndoSnapshot();
       const nextSchedule = state.schedule.filter((b) => b.dayIndex !== dayIndex);
       const activeWeekKey = getWeekKeyByOffset(state.selectedWeekOffset);
       const nextSchedulesByWeek = {
