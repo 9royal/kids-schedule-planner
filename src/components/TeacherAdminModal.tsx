@@ -63,6 +63,7 @@ export const TeacherAdminModal: React.FC<TeacherAdminModalProps> = ({
     simulateStudentsInRoom,
     syncMode,
     firebaseConnected,
+    firebaseConfig,
     connectFirebase,
     disconnectFirebase,
   } = usePlannerStore();
@@ -186,7 +187,11 @@ export const TeacherAdminModal: React.FC<TeacherAdminModalProps> = ({
       typeof window !== 'undefined'
         ? `${window.location.origin}${window.location.pathname}`
         : 'https://9royal.github.io/kids-schedule-planner/';
-    return `${baseUrl}?room=${encodeURIComponent(targetRoom)}&role=student`;
+    const dbParam =
+      firebaseConnected && firebaseConfig?.databaseURL
+        ? `&db=${encodeURIComponent(firebaseConfig.databaseURL)}`
+        : '';
+    return `${baseUrl}?room=${encodeURIComponent(targetRoom)}&role=student${dbParam}`;
   };
 
   const handleCopyRoomLink = (targetRoom: string) => {
@@ -222,15 +227,18 @@ export const TeacherAdminModal: React.FC<TeacherAdminModalProps> = ({
 
   const handleConnectFirebase = () => {
     setFbError(null);
-    if (!dbUrl.trim() || !projectId.trim()) {
-      setFbError('請輸入 Firebase Database URL 與 Project ID');
+    const cleanDb = dbUrl.trim().replace(/\/$/, '');
+    if (!cleanDb) {
+      setFbError('請貼上 Firebase Database URL（例如 https://xxx-default-rtdb.firebaseio.com）');
       return;
     }
+    const hostPart = cleanDb.replace(/^https?:\/\//, '').split('.')[0] || 'kids-planner';
+    const resolvedProjectId = projectId.trim() || hostPart.replace(/-default-rtdb$/, '');
     try {
       connectFirebase({
         apiKey: apiKey.trim() || 'demo-key',
-        databaseURL: dbUrl.trim(),
-        projectId: projectId.trim(),
+        databaseURL: cleanDb,
+        projectId: resolvedProjectId,
       });
     } catch (err: any) {
       setFbError(err?.message || '連線失敗');

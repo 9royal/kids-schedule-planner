@@ -1776,6 +1776,15 @@ export const usePlannerStore = create<PlannerStore>((setState, getState) => {
           }
         });
 
+        try {
+          localStorage.setItem(
+            `${STORAGE_PREFIX}firebase_config`,
+            JSON.stringify(config)
+          );
+        } catch {
+          // ignore
+        }
+
         setState({
           syncMode: 'firebase',
           firebaseConnected: true,
@@ -1807,13 +1816,49 @@ export const usePlannerStore = create<PlannerStore>((setState, getState) => {
         off(ref(firebaseDb, activeAllRoomsPath));
         activeAllRoomsPath = null;
       }
+      try {
+        localStorage.removeItem(`${STORAGE_PREFIX}firebase_config`);
+      } catch {
+        // ignore
+      }
       setState({
         syncMode: 'local',
         firebaseConnected: false,
+        firebaseConfig: null,
       });
     },
   };
 });
+
+// 啟動時若網址帶有 ?db=https://xxx.firebaseio.com（學生點擊老師的雲端班級連結）或本機曾儲存過 Firebase 設定，自動連線雲端！
+if (typeof window !== 'undefined') {
+  setTimeout(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const urlDb = params.get('db');
+      if (urlDb && urlDb.startsWith('http')) {
+        const cleanDb = urlDb.trim().replace(/\/$/, '');
+        const hostPart = cleanDb.replace(/^https?:\/\//, '').split('.')[0] || 'kids-planner';
+        const inferredProjectId = hostPart.replace(/-default-rtdb$/, '');
+        usePlannerStore.getState().connectFirebase({
+          apiKey: 'demo-key',
+          databaseURL: cleanDb,
+          projectId: inferredProjectId,
+        });
+        return;
+      }
+      const savedFb = localStorage.getItem(`${STORAGE_PREFIX}firebase_config`);
+      if (savedFb) {
+        const parsed = JSON.parse(savedFb);
+        if (parsed?.databaseURL) {
+          usePlannerStore.getState().connectFirebase(parsed);
+        }
+      }
+    } catch {
+      // ignore auto-connect errors
+    }
+  }, 50);
+}
 
 export function getParentCategory(id: ParentCategoryId) {
   return PARENT_CATEGORIES.find((c) => c.id === id) || PARENT_CATEGORIES[7];
