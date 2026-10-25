@@ -14,6 +14,7 @@ import {
   RefreshCw,
   BookOpen,
   ExternalLink,
+  Puzzle,
 } from 'lucide-react';
 
 function formatHoursAndMinutes(mins: number): string {
@@ -29,6 +30,7 @@ interface LeaderboardPanelProps {
   onSelectCategory: (catId: ParentCategoryId) => void;
   timeScope: 'weekly' | 'today';
   onChangeTimeScope: (scope: 'weekly' | 'today') => void;
+  onGoToPlannerTab: () => void;
 }
 
 export const LeaderboardPanel: React.FC<LeaderboardPanelProps> = ({
@@ -36,6 +38,7 @@ export const LeaderboardPanel: React.FC<LeaderboardPanelProps> = ({
   onSelectCategory,
   timeScope,
   onChangeTimeScope,
+  onGoToPlannerTab,
 }) => {
   const {
     student,
@@ -169,14 +172,20 @@ export const LeaderboardPanel: React.FC<LeaderboardPanelProps> = ({
         {/* Left Column (5 cols on lg): My 8 Categories Overview Grid */}
         <div className="lg:col-span-5 flex flex-col">
           <div className="p-4 rounded-2xl bg-slate-50/80 border border-slate-200/90 space-y-3 h-full flex flex-col justify-between">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
               <span className="text-xs sm:text-sm font-black text-slate-700 flex items-center gap-1.5">
-                <Sparkles className="w-4 h-4 text-amber-500" />
-                我的 8 大領域時數總覽（點擊可切換排行榜）
+                <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
+                <span>我的 8 大領域時數總覽（點擊可切換排行榜）</span>
               </span>
-              <span className="text-[11px] font-bold text-slate-500">
-                {timeScope === 'weekly' ? '本週累計' : '今日累計'}
-              </span>
+              <button
+                type="button"
+                onClick={onGoToPlannerTab}
+                className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 border-2 border-amber-600 text-white font-black text-xs inline-flex items-center gap-1.5 shadow-2xs shrink-0 transition cursor-pointer"
+                title="前往規劃作息表"
+              >
+                <Puzzle className="w-3.5 h-3.5 shrink-0" />
+                <span>規劃作息表</span>
+              </button>
             </div>
 
             <div className="grid grid-cols-2 gap-2.5 flex-1">

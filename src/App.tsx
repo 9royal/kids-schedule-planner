@@ -305,11 +305,10 @@ export function PlannerApp() {
       <main className="flex-1 flex flex-col gap-3 p-3 sm:p-4 max-w-[1920px] w-full mx-auto">
         {activeTab === 'dashboard' ? (
           <>
-            {/* 時間與排行頁面：左＝現在時間時鐘、中＝現在進行中活動（含規劃作息表連結）、右＝個人資訊卡與系統管理介面連結 */}
+            {/* 時間與排行頁面：上方 4 格完整顯示（時鐘 ｜ 現在進行中 ｜ 下個活動 ｜ 個人資料），規劃作息表連結移至下方 8 大領域時數總覽右方 */}
             <DualClockDashboard
               selectedCategory={selectedLeaderboardCategory}
               timeScope={leaderboardTimeScope}
-              onGoToPlannerTab={() => setActiveTab('planner')}
               onOpenManagementModal={handleOpenManagementModal}
             />
             <LeaderboardPanel
@@ -317,6 +316,7 @@ export function PlannerApp() {
               onSelectCategory={setSelectedLeaderboardCategory}
               timeScope={leaderboardTimeScope}
               onChangeTimeScope={setLeaderboardTimeScope}
+              onGoToPlannerTab={() => setActiveTab('planner')}
             />
           </>
         ) : (

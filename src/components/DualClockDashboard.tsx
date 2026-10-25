@@ -43,14 +43,12 @@ function formatHoursAndMinutes(mins: number): string {
 interface DualClockDashboardProps {
   selectedCategory: ParentCategoryId;
   timeScope: 'weekly' | 'today';
-  onGoToPlannerTab: () => void;
   onOpenManagementModal: () => void;
 }
 
 export const DualClockDashboard: React.FC<DualClockDashboardProps> = ({
   selectedCategory,
   timeScope,
-  onGoToPlannerTab,
   onOpenManagementModal,
 }) => {
   const {
@@ -190,140 +188,127 @@ export const DualClockDashboard: React.FC<DualClockDashboardProps> = ({
   };
 
   return (
-    <section className="bg-white/95 backdrop-blur-md border-2 border-amber-200/80 rounded-3xl shadow-sm p-3.5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-12 gap-3 items-stretch">
-      {/* 1. 第一格（xl:col-span-4）：時鐘方框 ＋ 規劃作息表連結（移入時鐘方框內右側） */}
-      <div className="xl:col-span-4 flex items-center justify-between gap-2.5 bg-amber-50/45 border border-amber-200/70 rounded-2xl px-3.5 py-2.5">
-        <div className="flex items-center gap-3 min-w-0">
-          {/* Vector Analog Clock */}
-          <div className="relative w-16 h-16 sm:w-20 sm:h-20 shrink-0">
-            <svg viewBox="0 0 120 120" className="w-full h-full drop-shadow-sm">
-              <circle
-                cx="60"
-                cy="60"
-                r="56"
-                fill="#FFFBEB"
-                stroke="#F59E0B"
-                strokeWidth="5"
-              />
-              {Array.from({ length: 12 }).map((_, i) => {
-                const num = i === 0 ? 12 : i;
-                const angleRad = ((i * 30 - 90) * Math.PI) / 180;
-                const x1 = 60 + Math.cos(angleRad) * 46;
-                const y1 = 60 + Math.sin(angleRad) * 46;
-                const x2 = 60 + Math.cos(angleRad) * 51;
-                const y2 = 60 + Math.sin(angleRad) * 51;
-                const tx = 60 + Math.cos(angleRad) * 37;
-                const ty = 60 + Math.sin(angleRad) * 37;
-                return (
-                  <g key={i}>
-                    <line
-                      x1={x1}
-                      y1={y1}
-                      x2={x2}
-                      y2={y2}
-                      stroke="#64748B"
-                      strokeWidth={i % 3 === 0 ? '2.5' : '1.5'}
-                      strokeLinecap="round"
-                    />
-                    <text
-                      x={tx}
-                      y={ty + 3.5}
-                      textAnchor="middle"
-                      fontSize="9.5"
-                      fontWeight="800"
-                      fill="#334155"
-                    >
-                      {num}
-                    </text>
-                  </g>
-                );
-              })}
+    <section className="bg-white/95 backdrop-blur-md border-2 border-amber-200/80 rounded-3xl shadow-sm p-3.5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 items-stretch">
+      {/* 1. 第一格：時鐘方框（完整顯示現在時間與日期，不截斷末端訊息） */}
+      <div className="flex items-center gap-3 bg-amber-50/45 border border-amber-200/70 rounded-2xl px-3.5 py-2.5">
+        {/* Vector Analog Clock */}
+        <div className="relative w-16 h-16 sm:w-20 sm:h-20 shrink-0">
+          <svg viewBox="0 0 120 120" className="w-full h-full drop-shadow-sm">
+            <circle
+              cx="60"
+              cy="60"
+              r="56"
+              fill="#FFFBEB"
+              stroke="#F59E0B"
+              strokeWidth="5"
+            />
+            {Array.from({ length: 12 }).map((_, i) => {
+              const num = i === 0 ? 12 : i;
+              const angleRad = ((i * 30 - 90) * Math.PI) / 180;
+              const x1 = 60 + Math.cos(angleRad) * 46;
+              const y1 = 60 + Math.sin(angleRad) * 46;
+              const x2 = 60 + Math.cos(angleRad) * 51;
+              const y2 = 60 + Math.sin(angleRad) * 51;
+              const tx = 60 + Math.cos(angleRad) * 37;
+              const ty = 60 + Math.sin(angleRad) * 37;
+              return (
+                <g key={i}>
+                  <line
+                    x1={x1}
+                    y1={y1}
+                    x2={x2}
+                    y2={y2}
+                    stroke="#64748B"
+                    strokeWidth={i % 3 === 0 ? '2.5' : '1.5'}
+                    strokeLinecap="round"
+                  />
+                  <text
+                    x={tx}
+                    y={ty + 3.5}
+                    textAnchor="middle"
+                    fontSize="9.5"
+                    fontWeight="800"
+                    fill="#334155"
+                  >
+                    {num}
+                  </text>
+                </g>
+              );
+            })}
 
-              {/* Hour Hand */}
-              <g transform={`rotate(${hourAngle} 60 60)`}>
-                <line
-                  x1="60"
-                  y1="62"
-                  x2="60"
-                  y2="34"
-                  stroke="#1E293B"
-                  strokeWidth="4.5"
-                  strokeLinecap="round"
-                />
-              </g>
-
-              {/* Minute Hand */}
-              <g transform={`rotate(${minuteAngle} 60 60)`}>
-                <line
-                  x1="60"
-                  y1="64"
-                  x2="60"
-                  y2="22"
-                  stroke="#2563EB"
-                  strokeWidth="3.2"
-                  strokeLinecap="round"
-                />
-              </g>
-
-              {/* Second Hand */}
-              <g transform={`rotate(${secondAngle} 60 60)`}>
-                <line
-                  x1="60"
-                  y1="68"
-                  x2="60"
-                  y2="18"
-                  stroke="#EF4444"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                />
-              </g>
-
-              {/* Center Cap */}
-              <circle
-                cx="60"
-                cy="60"
-                r="4.5"
-                fill="#F59E0B"
+            {/* Hour Hand */}
+            <g transform={`rotate(${hourAngle} 60 60)`}>
+              <line
+                x1="60"
+                y1="62"
+                x2="60"
+                y2="34"
                 stroke="#1E293B"
-                strokeWidth="2"
+                strokeWidth="4.5"
+                strokeLinecap="round"
               />
-            </svg>
-          </div>
+            </g>
 
-          {/* 24-Hour Digital Clock (現在時間) */}
-          <div className="flex flex-col min-w-0">
-            <div className="flex items-center gap-1 text-[11px] font-bold text-amber-700">
-              <Clock className="w-3 h-3 shrink-0" />
-              <span className="truncate">
-                現在時間 · {dateStr} {dayInfo.full}
-              </span>
-            </div>
+            {/* Minute Hand */}
+            <g transform={`rotate(${minuteAngle} 60 60)`}>
+              <line
+                x1="60"
+                y1="64"
+                x2="60"
+                y2="22"
+                stroke="#2563EB"
+                strokeWidth="3.2"
+                strokeLinecap="round"
+              />
+            </g>
 
-            <div className="font-rounded text-2xl sm:text-3xl font-black tracking-tight text-slate-800 tabular-nums leading-none mt-1">
-              {formatTime24(displayHours, displayMinutes, displaySeconds)}
-            </div>
+            {/* Second Hand */}
+            <g transform={`rotate(${secondAngle} 60 60)`}>
+              <line
+                x1="60"
+                y1="68"
+                x2="60"
+                y2="18"
+                stroke="#EF4444"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+              />
+            </g>
 
-            <div className="text-[11px] font-medium text-slate-500 mt-1 truncate">
-              24小時制標準時鐘 · {displayHours < 12 ? '上午 AM' : '下午 PM'}
-            </div>
-          </div>
+            {/* Center Cap */}
+            <circle
+              cx="60"
+              cy="60"
+              r="4.5"
+              fill="#F59E0B"
+              stroke="#1E293B"
+              strokeWidth="2"
+            />
+          </svg>
         </div>
 
-        {/* 規劃作息表連結（移入時鐘方框內右側） */}
-        <button
-          type="button"
-          onClick={onGoToPlannerTab}
-          className="px-3 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 border-2 border-amber-600 text-white font-black text-xs inline-flex items-center gap-1.5 shadow-sm shrink-0 transition cursor-pointer"
-          title="前往規劃作息表"
-        >
-          <Puzzle className="w-4 h-4 shrink-0" />
-          <span>規劃作息表</span>
-        </button>
+        {/* 24-Hour Digital Clock (現在時間) */}
+        <div className="flex flex-col min-w-0 flex-1">
+          <div className="flex items-center gap-1 text-[11px] font-bold text-amber-700 flex-wrap">
+            <Clock className="w-3 h-3 shrink-0" />
+            <span>
+              現在時間 · {dateStr} {dayInfo.full}
+            </span>
+          </div>
+
+          <div className="font-rounded text-2xl sm:text-3xl font-black tracking-tight text-slate-800 tabular-nums leading-none mt-1">
+            {formatTime24(displayHours, displayMinutes, displaySeconds)}
+          </div>
+
+          <div className="text-[11px] font-medium text-slate-500 mt-1">
+            24小時制標準時鐘 · {displayHours < 12 ? '上午 AM' : '下午 PM'}
+          </div>
+        </div>
       </div>
 
-      {/* 2. 第二格（xl:col-span-3）：現在進行中活動方框 */}
+      {/* 2. 第二格：現在進行中活動方框 */}
       <div
-        className="xl:col-span-3 rounded-2xl border-2 px-3.5 py-2.5 flex items-center gap-3 transition-colors"
+        className="rounded-2xl border-2 px-3.5 py-2.5 flex items-center gap-3 transition-colors"
         style={{
           backgroundColor: parentCat ? parentCat.bgLight : '#F8FAFC',
           borderColor: parentCat ? parentCat.borderColor : '#E2E8F0',
@@ -359,17 +344,16 @@ export const DualClockDashboard: React.FC<DualClockDashboardProps> = ({
                 </span>
               </div>
 
-              <div className="text-lg sm:text-xl font-black text-slate-900 tracking-wide truncate">
+              <div className="text-lg sm:text-xl font-black text-slate-900 tracking-wide">
                 <RubyText
                   text={activeBlock.name}
                   zhuyin={activeBlock.zhuyin}
                   rtClassName="text-slate-700"
-                  nowrap
                 />
               </div>
 
               {activeBlock.english && (
-                <div className="text-[11px] font-bold text-slate-600 tracking-wide truncate">
+                <div className="text-[11px] font-bold text-slate-600 tracking-wide">
                   {activeBlock.english}
                 </div>
               )}
@@ -384,15 +368,14 @@ export const DualClockDashboard: React.FC<DualClockDashboardProps> = ({
               <div className="text-[11px] font-bold text-amber-700 mb-0.5">
                 現在進行中 · 尚未安排
               </div>
-              <div className="text-base sm:text-lg font-black text-slate-800 truncate">
+              <div className="text-base sm:text-lg font-black text-slate-800">
                 <RubyText
                   text="自由探索時間"
                   zhuyin="ㄗˋ ㄧㄡˊ ㄊㄢˋ ㄙㄨㄛˇ ㄕˊ ㄐㄧㄢ"
                   rtClassName="text-slate-600"
-                  nowrap
                 />
               </div>
-              <div className="text-[11px] font-bold text-slate-500 truncate">
+              <div className="text-[11px] font-bold text-slate-500">
                 Free Exploration Time
               </div>
             </div>
@@ -400,31 +383,31 @@ export const DualClockDashboard: React.FC<DualClockDashboardProps> = ({
         )}
       </div>
 
-      {/* 3. 第三格（xl:col-span-2）：下個活動的提示方框（位於「現在進行中」與「個人資料」中間） */}
+      {/* 3. 第三格：下個活動的提示方框（位於「現在進行中」與「個人資料」中間） */}
       <div
-        className="xl:col-span-2 rounded-2xl border-2 px-3 py-2.5 flex items-center gap-2.5 transition-colors"
+        className="rounded-2xl border-2 px-3.5 py-2.5 flex items-center gap-3 transition-colors"
         style={{
           backgroundColor: nextParentCat ? `${nextParentCat.bgLight}` : '#F8FAFC',
           borderColor: nextParentCat ? nextParentCat.borderColor : '#CBD5E1',
         }}
       >
         {nextBlock && nextParentCat ? (
-          <div className="flex items-center gap-2.5 min-w-0 w-full">
+          <div className="flex items-center gap-3 min-w-0 w-full">
             <div
-              className="w-11 h-11 rounded-2xl flex items-center justify-center shadow-2xs border-2 bg-white shrink-0"
+              className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl flex items-center justify-center shadow-2xs border-2 bg-white shrink-0"
               style={{ borderColor: nextBlock.color }}
             >
-              <CuteActivityIcon iconName={nextBlock.iconName} size={28} />
+              <CuteActivityIcon iconName={nextBlock.iconName} size={32} />
             </div>
 
             <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1 flex-wrap mb-0.5">
+              <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
                 <span
-                  className="text-[10px] font-black px-2 py-0.5 rounded-full text-white inline-flex items-center gap-0.5"
+                  className="text-[11px] font-black px-2 py-0.5 rounded-full text-white inline-flex items-center gap-1"
                   style={{ backgroundColor: nextBlock.color }}
                 >
-                  <FastForward className="w-2.5 h-2.5 shrink-0" />
-                  <span>下個活動</span>
+                  <FastForward className="w-3 h-3 shrink-0" />
+                  <span>下個活動 · {nextParentCat.name}</span>
                 </span>
                 <span className="text-[11px] font-bold text-slate-600 tabular-nums">
                   {isNextBlockTomorrow ? '明日 ' : ''}
@@ -432,33 +415,37 @@ export const DualClockDashboard: React.FC<DualClockDashboardProps> = ({
                     Math.floor(nextBlock.startMinute / 60),
                     nextBlock.startMinute % 60
                   )}
+                  –
+                  {formatTime24(
+                    Math.floor((nextBlock.startMinute + nextBlock.durationMinutes) / 60),
+                    (nextBlock.startMinute + nextBlock.durationMinutes) % 60
+                  )}
                 </span>
               </div>
 
-              <div className="text-base sm:text-lg font-black text-slate-900 tracking-wide truncate">
+              <div className="text-lg sm:text-xl font-black text-slate-900 tracking-wide">
                 <RubyText
                   text={nextBlock.name}
                   zhuyin={nextBlock.zhuyin}
                   rtClassName="text-slate-700"
-                  nowrap
                 />
               </div>
 
-              <div className="text-[10px] font-bold text-slate-500 truncate">
+              <div className="text-[11px] font-bold text-slate-600">
                 {minutesUntilNext !== null && minutesUntilNext > 0
-                  ? `還有 ${formatHoursAndMinutes(minutesUntilNext)} 開始`
+                  ? `距離開始還有 ${formatHoursAndMinutes(minutesUntilNext)}`
                   : nextBlock.english || nextParentCat.name}
               </div>
             </div>
           </div>
         ) : (
-          <div className="flex items-center gap-2.5 min-w-0 w-full">
-            <div className="w-11 h-11 rounded-2xl flex items-center justify-center bg-white border-2 border-dashed border-slate-300 shrink-0">
+          <div className="flex items-center gap-3 min-w-0 w-full">
+            <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl flex items-center justify-center bg-white border-2 border-dashed border-slate-300 shrink-0">
               <FastForward className="w-5 h-5 text-slate-400" />
             </div>
             <div className="min-w-0 flex-1">
-              <div className="text-[10px] font-bold text-slate-500 mb-0.5">下個活動預告</div>
-              <div className="text-sm font-black text-slate-700 truncate">
+              <div className="text-[11px] font-bold text-slate-500 mb-0.5">下個活動預告</div>
+              <div className="text-base font-black text-slate-700">
                 尚無後續排程
               </div>
             </div>
@@ -466,8 +453,8 @@ export const DualClockDashboard: React.FC<DualClockDashboardProps> = ({
         )}
       </div>
 
-      {/* 4. 第四格（xl:col-span-3）：個人資料方框（移除修改暱稱与更換頭像文字，個資與系統管理 icon 移至名稱後面） */}
-      <div className="xl:col-span-3 px-3.5 py-2.5 rounded-2xl bg-gradient-to-br from-amber-50/90 via-orange-50/50 to-white border-2 border-amber-200/90 flex flex-col justify-center">
+      {/* 4. 第四格：個人資料方框（移除修改暱稱與更換頭像文字，個資與系統管理 icon 移至名稱後面） */}
+      <div className="px-3.5 py-2.5 rounded-2xl bg-gradient-to-br from-amber-50/90 via-orange-50/50 to-white border-2 border-amber-200/90 flex flex-col justify-center">
         <div className="flex items-center gap-3">
           {/* 圓形大頭貼與相機按鈕 */}
           <div className="relative group shrink-0">
@@ -499,7 +486,7 @@ export const DualClockDashboard: React.FC<DualClockDashboardProps> = ({
               <span className="bg-amber-500 text-white text-xs font-black px-2.5 py-0.5 rounded-full shrink-0">
                 班級 {roomId} · {student.seatNumber} 號
               </span>
-              <span className="font-black text-base text-slate-900 truncate">
+              <span className="font-black text-base text-slate-900">
                 {formatLeaderboardDisplayName(
                   student.name,
                   student.nickname,
@@ -518,7 +505,7 @@ export const DualClockDashboard: React.FC<DualClockDashboardProps> = ({
               </button>
             </div>
 
-            <div className="text-xs font-bold text-slate-600 mt-1.5 truncate">
+            <div className="text-xs font-bold text-slate-600 mt-1.5">
               目前【{activeCategoryObj.name}榜】排名：
               <strong className="text-amber-700 text-sm">第 {myRank || '-'} 名</strong>（
               {formatHoursAndMinutes(myScore)}）

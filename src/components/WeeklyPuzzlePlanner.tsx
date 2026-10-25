@@ -3,6 +3,7 @@ import {
   usePlannerStore,
   getWeekMondayByOffset,
   mergeAdjacentSameActivityBlocks,
+  adjustNeighborsForBlockUpdate,
 } from '../store/usePlannerStore';
 import {
   DAYS_OF_WEEK,
@@ -69,6 +70,7 @@ interface DragInteractionState {
   initialDayIndex: number;
   initialStartMinute: number;
   initialDurationMinutes: number;
+  initialSchedule: ScheduleBlock[];
 }
 
 interface PanCanvasState {
@@ -386,7 +388,7 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
       const snappedDelta = Math.round(rawDeltaMinutes / snapMinutes) * snapMinutes;
 
       if (currentDrag.mode === 'move') {
-        let nextStart = Math.max(
+        const nextStart = Math.max(
           0,
           Math.min(
             1440 - currentDrag.initialDurationMinutes,
@@ -404,82 +406,52 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
           }
         }
 
-        const currentSchedule = usePlannerStore.getState().schedule;
-        const sameDayOthers = currentSchedule.filter(
-          (b) => b.dayIndex === targetDayIndex && b.id !== currentDrag.blockId
+        const adjusted = adjustNeighborsForBlockUpdate(
+          currentDrag.initialSchedule,
+          currentDrag.blockId,
+          {
+            dayIndex: targetDayIndex,
+            startMinute: nextStart,
+          },
+          false
         );
-        for (const other of sameDayOthers) {
-          const otherEnd = other.startMinute + other.durationMinutes;
-          if (Math.abs(nextStart - otherEnd) <= 15) {
-            nextStart = otherEnd;
-            break;
-          }
-          const myEnd = nextStart + currentDrag.initialDurationMinutes;
-          if (Math.abs(myEnd - other.startMinute) <= 15) {
-            nextStart = Math.max(0, other.startMinute - currentDrag.initialDurationMinutes);
-            break;
-          }
-        }
-
-        updateBlock(currentDrag.blockId, {
-          dayIndex: targetDayIndex,
-          startMinute: nextStart,
-        });
+        replaceSchedule(adjusted);
         setPreviewTimeMinutes(nextStart);
       } else if (currentDrag.mode === 'resize-right') {
         const maxDuration = 1440 - currentDrag.initialStartMinute;
-        let nextDuration = Math.max(
+        const nextDuration = Math.max(
           snapMinutes,
           Math.min(maxDuration, currentDrag.initialDurationMinutes + snappedDelta)
         );
 
-        const currentSchedule = usePlannerStore.getState().schedule;
-        const myEnd = currentDrag.initialStartMinute + nextDuration;
-        for (const other of currentSchedule) {
-          if (
-            other.dayIndex === currentDrag.initialDayIndex &&
-            other.id !== currentDrag.blockId
-          ) {
-            if (
-              Math.abs(myEnd - other.startMinute) <= 15 &&
-              other.startMinute > currentDrag.initialStartMinute
-            ) {
-              nextDuration = other.startMinute - currentDrag.initialStartMinute;
-              break;
-            }
-          }
-        }
-
-        updateBlock(currentDrag.blockId, { durationMinutes: nextDuration });
+        const adjusted = adjustNeighborsForBlockUpdate(
+          currentDrag.initialSchedule,
+          currentDrag.blockId,
+          { durationMinutes: nextDuration },
+          false
+        );
+        replaceSchedule(adjusted);
         setPreviewTimeMinutes(currentDrag.initialStartMinute + nextDuration);
       } else if (currentDrag.mode === 'resize-left') {
         const originalEnd =
           currentDrag.initialStartMinute + currentDrag.initialDurationMinutes;
         const maxStart = originalEnd - snapMinutes;
-        let nextStart = Math.max(
+        const nextStart = Math.max(
           0,
           Math.min(maxStart, currentDrag.initialStartMinute + snappedDelta)
         );
 
-        const currentSchedule = usePlannerStore.getState().schedule;
-        for (const other of currentSchedule) {
-          if (
-            other.dayIndex === currentDrag.initialDayIndex &&
-            other.id !== currentDrag.blockId
-          ) {
-            const otherEnd = other.startMinute + other.durationMinutes;
-            if (Math.abs(nextStart - otherEnd) <= 15 && otherEnd < originalEnd) {
-              nextStart = otherEnd;
-              break;
-            }
-          }
-        }
-
         const nextDuration = originalEnd - nextStart;
-        updateBlock(currentDrag.blockId, {
-          startMinute: nextStart,
-          durationMinutes: nextDuration,
-        });
+        const adjusted = adjustNeighborsForBlockUpdate(
+          currentDrag.initialSchedule,
+          currentDrag.blockId,
+          {
+            startMinute: nextStart,
+            durationMinutes: nextDuration,
+          },
+          false
+        );
+        replaceSchedule(adjusted);
         setPreviewTimeMinutes(nextStart);
       }
     };
@@ -502,7 +474,7 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
       window.removeEventListener('pointerup', handlePointerUp);
       window.removeEventListener('pointercancel', handlePointerUp);
     };
-  }, [dragState, snapMinutes, updateBlock, setPreviewTimeMinutes, pushUndoSnapshot]);
+  }, [dragState, snapMinutes, replaceSchedule, setPreviewTimeMinutes, pushUndoSnapshot]);
 
   const computeSnappedMinuteFromEvent = (
     clientX: number,
@@ -1252,6 +1224,7 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
                             initialDayIndex: block.dayIndex,
                             initialStartMinute: block.startMinute,
                             initialDurationMinutes: block.durationMinutes,
+                            initialSchedule: schedule.map((b) => ({ ...b })),
                           });
                         }}
                       />

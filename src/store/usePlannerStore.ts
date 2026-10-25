@@ -152,6 +152,114 @@ export function mergeAdjacentSameActivityBlocks(
   return mergedAll;
 }
 
+/**
+ * 當某個積木被調整時間或時長（例如：提早30分、延後30分、時長+30分、時長-30分，或拖曳拉伸）時，
+ * 自動讓前後相鄰或重疊的活動積木跟隨調整時間（絕不讓兩個活動重疊）。
+ */
+export function adjustNeighborsForBlockUpdate(
+  baseSchedule: ScheduleBlock[],
+  targetBlockId: string,
+  updates: Partial<ScheduleBlock>,
+  autoMerge = true
+): ScheduleBlock[] {
+  const oldBlock = baseSchedule.find((b) => b.id === targetBlockId);
+  if (!oldBlock) return baseSchedule;
+
+  const updatedBlock: ScheduleBlock = {
+    ...oldBlock,
+    ...updates,
+  };
+
+  const oldDay = oldBlock.dayIndex;
+  const newDay = updatedBlock.dayIndex;
+  const oldStart = oldBlock.startMinute;
+  const oldEnd = oldBlock.startMinute + oldBlock.durationMinutes;
+  const newStart = updatedBlock.startMinute;
+  const newEnd = updatedBlock.startMinute + updatedBlock.durationMinutes;
+  const isSameDay = oldDay === newDay;
+
+  const adjustedOthers: ScheduleBlock[] = [];
+
+  for (const existing of baseSchedule) {
+    if (existing.id === targetBlockId) continue;
+    if (existing.dayIndex !== newDay) {
+      adjustedOthers.push(existing);
+      continue;
+    }
+
+    const eStart = existing.startMinute;
+    const eEnd = existing.startMinute + existing.durationMinutes;
+
+    const isSameActivity =
+      existing.name.trim() === updatedBlock.name.trim() &&
+      existing.parentId === updatedBlock.parentId;
+    if (autoMerge && isSameActivity && !(eEnd < newStart || eStart > newEnd)) {
+      adjustedOthers.push(existing);
+      continue;
+    }
+
+    // 1. 若為同一天內調整，且原本與此積木「前／後無縫相連」：當邊界內縮時，前後活動自動跟隨填補時間
+    if (isSameDay) {
+      // 前方緊鄰的活動：當目標積木往後延（newStart > oldStart），前方活動結束時間跟隨延伸至 newStart
+      if (eEnd === oldStart && newStart > oldStart) {
+        adjustedOthers.push({
+          ...existing,
+          durationMinutes: newStart - eStart,
+        });
+        continue;
+      }
+      // 後方緊鄰的活動：當目標積木提早結束（newEnd < oldEnd），後方活動開始時間跟隨往前移至 newEnd
+      if (eStart === oldEnd && newEnd < oldEnd) {
+        adjustedOthers.push({
+          ...existing,
+          startMinute: newEnd,
+          durationMinutes: eEnd - newEnd,
+        });
+        continue;
+      }
+    }
+
+    // 2. 無重疊的活動直接保留
+    if (eEnd <= newStart || eStart >= newEnd) {
+      adjustedOthers.push(existing);
+      continue;
+    }
+
+    // 3. 有重疊的活動（例如提早30分壓到前一個活動、或時長+30分／延後30分壓到後一個活動）：自動裁切／推移前後活動時間，絕不重疊
+    if (eStart < newStart && eEnd > newStart) {
+      const trimmedDuration = newStart - eStart;
+      if (trimmedDuration >= 15) {
+        adjustedOthers.push({
+          ...existing,
+          durationMinutes: trimmedDuration,
+        });
+      }
+    }
+
+    if (eEnd > newEnd && eStart < newEnd) {
+      const afterDuration = eEnd - newEnd;
+      if (afterDuration >= 15) {
+        const isSplit = eStart < newStart;
+        adjustedOthers.push({
+          ...existing,
+          id: isSplit
+            ? `${existing.id}-tail-${Date.now().toString(36).slice(-3)}`
+            : existing.id,
+          startMinute: newEnd,
+          durationMinutes: afterDuration,
+        });
+      }
+    }
+  }
+
+  adjustedOthers.push(updatedBlock);
+
+  if (autoMerge) {
+    return mergeAdjacentSameActivityBlocks(adjustedOthers, updatedBlock.id);
+  }
+  return adjustedOthers;
+}
+
 function computeCategoryTotals(schedule: ScheduleBlock[]) {
   const totals: Record<ParentCategoryId, number> = {
     study: 0,
@@ -468,17 +576,26 @@ function loadActiveUserProfile(): {
   hasCompletedOnboarding: boolean;
   snapMinutes: 15 | 30;
 } {
+  let urlRoom: string | null = null;
+  if (typeof window !== 'undefined') {
+    const params = new URLSearchParams(window.location.search);
+    const r = params.get('room');
+    if (r && r.trim()) {
+      urlRoom = r.trim();
+    }
+  }
+
   try {
     const raw = localStorage.getItem(`${STORAGE_PREFIX}active_user_profile`);
     if (raw) {
       const parsed = JSON.parse(raw);
       return {
-        roomId: (parsed.roomId || '301').trim(),
+        roomId: urlRoom || (parsed.roomId || '301').trim(),
         seatNumber:
-          typeof parsed.seatNumber === 'number' && parsed.seatNumber >= 1 && parsed.seatNumber <= 40
+          typeof parsed.seatNumber === 'number' && parsed.seatNumber >= 1 && parsed.seatNumber <= 60
             ? parsed.seatNumber
             : 1,
-        hasCompletedOnboarding: Boolean(parsed.hasCompletedOnboarding),
+        hasCompletedOnboarding: urlRoom && urlRoom !== parsed.roomId ? false : Boolean(parsed.hasCompletedOnboarding),
         snapMinutes: parsed.snapMinutes === 30 ? 30 : 15,
       };
     }
@@ -486,7 +603,7 @@ function loadActiveUserProfile(): {
     // ignore
   }
   return {
-    roomId: '301',
+    roomId: urlRoom || '301',
     seatNumber: 1,
     hasCompletedOnboarding: false,
     snapMinutes: 15,
@@ -1039,12 +1156,12 @@ export const usePlannerStore = create<PlannerStore>((setState, getState) => {
         getState().pushUndoSnapshot();
       }
       const state = getState();
-      let nextSchedule = state.schedule.map((b) =>
-        b.id === id ? { ...b, ...updates } : b
+      const nextSchedule = adjustNeighborsForBlockUpdate(
+        state.schedule,
+        id,
+        updates,
+        autoMerge
       );
-      if (autoMerge) {
-        nextSchedule = mergeAdjacentSameActivityBlocks(nextSchedule, id);
-      }
       const activeWeekKey = getWeekKeyByOffset(state.selectedWeekOffset);
       const nextSchedulesByWeek = {
         ...state.schedulesByWeek,

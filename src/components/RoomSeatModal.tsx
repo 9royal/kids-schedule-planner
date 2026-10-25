@@ -29,6 +29,8 @@ import {
   Sparkles,
   Globe,
   Download,
+  Link2,
+  Copy,
 } from 'lucide-react';
 
 interface RoomSeatModalProps {
@@ -94,6 +96,16 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
 
   // 班級 40 人模擬狀態（管理介面分頁 3）
   const [isSimulating, setIsSimulating] = useState(false);
+
+  // 學生專屬純淨模式（若網址帶有 ?role=student 則預設隱藏「3. 班級名單管理」教師後台）
+  const [isStudentMode, setIsStudentMode] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('role') === 'student';
+    }
+    return false;
+  });
+  const [copiedLinkMsg, setCopiedLinkMsg] = useState<string | null>(null);
 
   // Optional Firebase Config fields
   const [showFirebaseConfig, setShowFirebaseConfig] = useState(false);
@@ -250,44 +262,63 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
 
         {/* Management Sub-Tabs (Shown when not in first-time onboarding, or allow switching) */}
         {!isFirstTimeOnboarding && (
-          <div className="px-6 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center gap-2 overflow-x-auto">
+          <div className="px-6 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-2 overflow-x-auto">
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setActiveTab('profile')}
+                className={`h-9 px-3.5 rounded-xl text-xs font-black inline-flex items-center gap-1.5 border transition cursor-pointer ${
+                  activeTab === 'profile'
+                    ? 'bg-amber-500 text-white border-amber-500 shadow-2xs'
+                    : 'bg-white text-slate-700 border-slate-200 hover:bg-amber-50'
+                }`}
+              >
+                <UserCheck className="w-4 h-4" />
+                <span>1. 個人資料與偏好設定</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('templates')}
+                className={`h-9 px-3.5 rounded-xl text-xs font-black inline-flex items-center gap-1.5 border transition cursor-pointer ${
+                  activeTab === 'templates'
+                    ? 'bg-amber-500 text-white border-amber-500 shadow-2xs'
+                    : 'bg-white text-slate-700 border-slate-200 hover:bg-amber-50'
+                }`}
+              >
+                <Puzzle className="w-4 h-4" />
+                <span>2. 活動積木庫 & 注音/翻譯 API ({templates.length})</span>
+              </button>
+              {!isStudentMode && (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('classroom')}
+                  className={`h-9 px-3.5 rounded-xl text-xs font-black inline-flex items-center gap-1.5 border transition cursor-pointer ${
+                    activeTab === 'classroom'
+                      ? 'bg-amber-500 text-white border-amber-500 shadow-2xs'
+                      : 'bg-white text-slate-700 border-slate-200 hover:bg-amber-50'
+                  }`}
+                >
+                  <Users className="w-4 h-4" />
+                  <span>
+                    3. 班級名單與資料管理 ({Object.keys(leaderboardMap).length} 人)
+                  </span>
+                </button>
+              )}
+            </div>
+
             <button
               type="button"
-              onClick={() => setActiveTab('profile')}
-              className={`h-9 px-3.5 rounded-xl text-xs font-black inline-flex items-center gap-1.5 border transition ${
-                activeTab === 'profile'
-                  ? 'bg-amber-500 text-white border-amber-500 shadow-2xs'
-                  : 'bg-white text-slate-700 border-slate-200 hover:bg-amber-50'
-              }`}
+              onClick={() => {
+                const nextMode = !isStudentMode;
+                setIsStudentMode(nextMode);
+                if (nextMode && activeTab === 'classroom') {
+                  setActiveTab('profile');
+                }
+              }}
+              className="h-8 px-2.5 rounded-lg bg-white hover:bg-slate-100 border border-slate-300 text-[11px] font-bold text-slate-600 shrink-0 transition cursor-pointer"
+              title="切換預覽「學生純淨介面（隱藏班級管理分頁）」或「教師完整管理介面」"
             >
-              <UserCheck className="w-4 h-4" />
-              <span>1. 個人資料與偏好設定</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('templates')}
-              className={`h-9 px-3.5 rounded-xl text-xs font-black inline-flex items-center gap-1.5 border transition ${
-                activeTab === 'templates'
-                  ? 'bg-amber-500 text-white border-amber-500 shadow-2xs'
-                  : 'bg-white text-slate-700 border-slate-200 hover:bg-amber-50'
-              }`}
-            >
-              <Puzzle className="w-4 h-4" />
-              <span>2. 活動積木庫 & 注音/翻譯 API ({templates.length})</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('classroom')}
-              className={`h-9 px-3.5 rounded-xl text-xs font-black inline-flex items-center gap-1.5 border transition ${
-                activeTab === 'classroom'
-                  ? 'bg-amber-500 text-white border-amber-500 shadow-2xs'
-                  : 'bg-white text-slate-700 border-slate-200 hover:bg-amber-50'
-              }`}
-            >
-              <Users className="w-4 h-4" />
-              <span>
-                3. 班級名單與資料管理 ({Object.keys(leaderboardMap).length} 人)
-              </span>
+              {isStudentMode ? '👩‍🏫 切換教師管理' : '🎒 預覽學生介面'}
             </button>
           </div>
         )}
@@ -638,6 +669,44 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
         {/* Tab 3: Classroom & Data Management */}
         {activeTab === 'classroom' && (
           <div className="p-5 overflow-y-auto space-y-4 text-xs">
+            {/* Student Dedicated Invite Link Generator */}
+            <div className="p-3.5 rounded-2xl bg-emerald-50/90 border border-emerald-200 space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="font-black text-emerald-950 text-sm flex items-center gap-1.5">
+                    <Link2 className="w-4 h-4 text-emerald-600" />
+                    <span>🎒 本班學生專屬使用連結（班級 {roomId}）</span>
+                  </div>
+                  <div className="text-emerald-800 font-bold text-[11px]">
+                    學生點擊此連結會自動帶入「班級 {roomId}」並開啟「學生純淨介面」（自動隱藏班級管理與踢人後台）
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const baseUrl =
+                      typeof window !== 'undefined'
+                        ? `${window.location.origin}${window.location.pathname}`
+                        : 'https://9royal.github.io/kids-schedule-planner/';
+                    const studentUrl = `${baseUrl}?room=${encodeURIComponent(roomId)}&role=student`;
+                    navigator.clipboard?.writeText(studentUrl);
+                    setCopiedLinkMsg(`已複製連結：${studentUrl}`);
+                    setTimeout(() => setCopiedLinkMsg(null), 4000);
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black inline-flex items-center gap-1.5 shadow-2xs transition cursor-pointer"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>一鍵複製學生專屬連結</span>
+                </button>
+              </div>
+              {copiedLinkMsg && (
+                <div className="text-[11px] font-black text-emerald-800 bg-white px-3 py-1.5 rounded-xl border border-emerald-200 break-all">
+                  ✅ {copiedLinkMsg}
+                </div>
+              )}
+            </div>
+
             {/* Classroom Headcount / Seat Limit & System Capacity Overview */}
             <div className="p-3.5 rounded-2xl bg-amber-50/80 border border-amber-200 space-y-2.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
