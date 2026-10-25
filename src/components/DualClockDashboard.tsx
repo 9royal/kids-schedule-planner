@@ -20,6 +20,7 @@ import {
   Camera,
   Settings,
   FastForward,
+  School,
 } from 'lucide-react';
 
 function formatTime24(hours: number, minutes: number, seconds?: number): string {
@@ -56,9 +57,24 @@ export const DualClockDashboard: React.FC<DualClockDashboardProps> = ({
     student,
     updateStudentProfile,
     leaderboardMap,
+    allClassroomsMap,
+    previewClassroomAsTeacher,
     schedule,
     schedulesByWeek,
   } = usePlannerStore();
+
+  const isTeacherMode =
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('mode') === 'teacher';
+  const classroomOptions = Object.keys(allClassroomsMap).sort((a, b) =>
+    a.localeCompare(b, 'zh-Hant-TW', { numeric: true })
+  );
+  if (!classroomOptions.includes(roomId)) {
+    classroomOptions.unshift(roomId);
+  }
+  const realStudentCountInRoom = Object.values(leaderboardMap).filter(
+    (e) => !e.isSimulated
+  ).length;
 
   const [now, setNow] = useState<Date>(() => new Date());
   const [avatarNotice, setAvatarNotice] = useState<string | null>(null);
@@ -453,72 +469,119 @@ export const DualClockDashboard: React.FC<DualClockDashboardProps> = ({
         )}
       </div>
 
-      {/* 4. 第四格：個人資料方框（移除修改暱稱與更換頭像文字，個資與系統管理 icon 移至名稱後面） */}
-      <div className="px-3.5 py-2.5 rounded-2xl bg-gradient-to-br from-amber-50/90 via-orange-50/50 to-white border-2 border-amber-200/90 flex flex-col justify-center">
-        <div className="flex items-center gap-3">
-          {/* 圓形大頭貼與相機按鈕 */}
-          <div className="relative group shrink-0">
-            <img
-              src={student.avatarUrl}
-              alt={student.name}
-              className="w-14 h-14 sm:w-16 sm:h-16 rounded-full object-cover border-2 border-amber-400 shadow-xs bg-white"
-            />
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="absolute -bottom-1 -right-1 w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center shadow border border-white transition cursor-pointer"
-              title="點擊更換大頭貼"
-            >
-              <Camera className="w-3.5 h-3.5" />
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              onChange={handleAvatarUpload}
-              className="hidden"
-            />
-          </div>
-
-          {/* 班級座號、暱稱＋個資與系統管理 icon、以及目前排行榜名次 */}
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="bg-amber-500 text-white text-xs font-black px-2.5 py-0.5 rounded-full shrink-0">
-                班級 {roomId} · {student.seatNumber} 號
-              </span>
-              <span className="font-black text-base text-slate-900">
-                {formatLeaderboardDisplayName(
-                  student.name,
-                  student.nickname,
-                  myDisplayPref
-                )}
-              </span>
-              {/* 個資與系統管理 icon 移到名稱後面 */}
-              <button
-                type="button"
-                onClick={onOpenManagementModal}
-                className="w-7 h-7 rounded-full bg-orange-100 hover:bg-orange-200 border border-orange-300 text-orange-700 flex items-center justify-center shadow-2xs transition cursor-pointer shrink-0"
-                title="開啟個人資料與系統管理介面（修改班級、座號、暱稱、頭像與班級管理）"
-                aria-label="開啟個人資料與系統管理介面"
-              >
-                <Settings className="w-3.5 h-3.5" />
-              </button>
+      {/* 4. 第四格：個人資料方框（若為 ?mode=teacher 教師模式，顯示「👩‍🏫 教師唯讀檢視模式」與班級快速切換，不扮演任何學生座號、絕不覆蓋學生資料！） */}
+      {isTeacherMode ? (
+        <div className="px-3.5 py-2.5 rounded-2xl bg-gradient-to-br from-indigo-50/95 via-slate-50 to-white border-2 border-indigo-300 flex flex-col justify-center">
+          <div className="flex items-center gap-3">
+            <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-indigo-700 text-amber-300 flex items-center justify-center shadow-xs border-2 border-indigo-400 shrink-0">
+              <School className="w-7 h-7" />
             </div>
 
-            <div className="text-xs font-bold text-slate-600 mt-1.5">
-              目前【{activeCategoryObj.name}榜】排名：
-              <strong className="text-amber-700 text-sm">第 {myRank || '-'} 名</strong>（
-              {formatHoursAndMinutes(myScore)}）
-            </div>
-
-            {avatarNotice && (
-              <div className="mt-1 text-[10px] font-bold text-emerald-700">
-                ✅ {avatarNotice}
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="bg-indigo-700 text-white text-xs font-black px-2.5 py-0.5 rounded-full shrink-0">
+                  👩‍🏫 教師唯讀檢視
+                </span>
+                <label className="inline-flex items-center gap-1 text-xs font-black text-slate-800">
+                  <span>班級：</span>
+                  <select
+                    value={roomId}
+                    onChange={(e) => previewClassroomAsTeacher(e.target.value)}
+                    className="rounded-lg border-2 border-indigo-300 bg-white px-2 py-0.5 text-xs font-black text-indigo-900 cursor-pointer"
+                    title="唯讀切換預覽班級（不會改動任何學生座號）"
+                  >
+                    {classroomOptions.map((rId) => (
+                      <option key={rId} value={rId}>
+                        {rId} 班
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  onClick={onOpenManagementModal}
+                  className="px-2.5 py-1 rounded-full bg-indigo-100 hover:bg-indigo-200 border border-indigo-300 text-indigo-800 text-xs font-black flex items-center gap-1 shadow-2xs transition cursor-pointer shrink-0"
+                  title="開啟教師全班級管理後台"
+                >
+                  <Settings className="w-3.5 h-3.5" />
+                  <span>教師後台</span>
+                </button>
               </div>
-            )}
+
+              <div className="text-xs font-bold text-slate-600 mt-1.5">
+                本班已加入學生：<strong className="text-indigo-700 text-sm">{realStudentCountInRoom} 人</strong>
+                <span className="text-[11px] text-slate-500 ml-1">（唯讀預覽中，不會覆蓋學生）</span>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
+      ) : (
+        <div className="px-3.5 py-2.5 rounded-2xl bg-gradient-to-br from-amber-50/90 via-orange-50/50 to-white border-2 border-amber-200/90 flex flex-col justify-center">
+          <div className="flex items-center gap-3">
+            {/* 圓形大頭貼與相機按鈕 */}
+            <div className="relative group shrink-0">
+              <img
+                src={student.avatarUrl}
+                alt={student.name}
+                className="w-14 h-14 sm:w-16 sm:h-16 rounded-full object-cover border-2 border-amber-400 shadow-xs bg-white"
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="absolute -bottom-1 -right-1 w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center shadow border border-white transition cursor-pointer"
+                title="點擊更換大頭貼"
+              >
+                <Camera className="w-3.5 h-3.5" />
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleAvatarUpload}
+                className="hidden"
+              />
+            </div>
+
+            {/* 班級座號、暱稱＋個資與系統管理 icon、以及目前排行榜名次 */}
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="bg-amber-500 text-white text-xs font-black px-2.5 py-0.5 rounded-full shrink-0">
+                  班級 {roomId} · {student.seatNumber} 號
+                </span>
+                <span className="font-black text-base text-slate-900">
+                  {formatLeaderboardDisplayName(
+                    student.name,
+                    student.nickname,
+                    myDisplayPref
+                  )}
+                </span>
+                {/* 個資與系統管理 icon 移到名稱後面 */}
+                <button
+                  type="button"
+                  onClick={onOpenManagementModal}
+                  className="w-7 h-7 rounded-full bg-orange-100 hover:bg-orange-200 border border-orange-300 text-orange-700 flex items-center justify-center shadow-2xs transition cursor-pointer shrink-0"
+                  title="開啟個人資料與系統管理介面（修改班級、座號、暱稱、頭像與班級管理）"
+                  aria-label="開啟個人資料與系統管理介面"
+                >
+                  <Settings className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <div className="text-xs font-bold text-slate-600 mt-1.5">
+                目前【{activeCategoryObj.name}榜】排名：
+                <strong className="text-amber-700 text-sm">第 {myRank || '-'} 名</strong>（
+                {formatHoursAndMinutes(myScore)}）
+              </div>
+
+              {avatarNotice && (
+                <div className="mt-1 text-[10px] font-bold text-emerald-700">
+                  ✅ {avatarNotice}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 };

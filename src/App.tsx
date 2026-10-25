@@ -107,6 +107,10 @@ export function PlannerApp() {
   };
 
   const handleOpenManagementModal = () => {
+    if (isTeacherUrlEntry) {
+      setIsTeacherAdminOpen(true);
+      return;
+    }
     setIsFirstTimeFlow(false);
     setIsRoomModalOpen(true);
   };

@@ -56,6 +56,7 @@ export const TeacherAdminModal: React.FC<TeacherAdminModalProps> = ({
     teacherPin,
     setTeacherPin,
     refreshAllClassrooms,
+    previewClassroomAsTeacher,
     createOrUpdateClassroom,
     deleteClassroom,
     removeStudentFromRoom,
@@ -544,15 +545,15 @@ export const TeacherAdminModal: React.FC<TeacherAdminModalProps> = ({
                         )}
                       </div>
 
-                      {/* 直接複製該班級學生連結按鈕（免切換學生身分！） */}
-                      <div className="pt-1 border-t border-slate-200/80 flex items-center justify-between gap-2">
+                      {/* 直接複製該班級學生連結按鈕 & 唯讀檢視此班畫面按鈕（免切換學生身分！） */}
+                      <div className="pt-1 border-t border-slate-200/80 flex items-center justify-between gap-1.5">
                         <button
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
                             handleCopyRoomLink(room.roomId);
                           }}
-                          className={`flex-1 py-1.5 px-3 rounded-xl font-black text-xs inline-flex items-center justify-center gap-1.5 transition cursor-pointer ${
+                          className={`flex-1 py-1.5 px-2.5 rounded-xl font-black text-xs inline-flex items-center justify-center gap-1 transition cursor-pointer ${
                             isCopied
                               ? 'bg-emerald-600 text-white'
                               : 'bg-indigo-600 hover:bg-indigo-700 text-white'
@@ -561,14 +562,26 @@ export const TeacherAdminModal: React.FC<TeacherAdminModalProps> = ({
                           {isCopied ? (
                             <>
                               <Check className="w-3.5 h-3.5" />
-                              <span>已複製 {room.roomId} 班學生連結！</span>
+                              <span>已複製 {room.roomId} 班連結</span>
                             </>
                           ) : (
                             <>
                               <Copy className="w-3.5 h-3.5" />
-                              <span>複製「{room.roomId} 班」學生連結</span>
+                              <span>複製「{room.roomId} 班」連結</span>
                             </>
                           )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            previewClassroomAsTeacher(room.roomId);
+                            onClose();
+                          }}
+                          className="py-1.5 px-2.5 rounded-xl bg-amber-100 hover:bg-amber-200 border border-amber-300 text-amber-900 font-black text-xs inline-flex items-center gap-1 transition cursor-pointer shrink-0"
+                          title="唯讀檢視此班級的排行榜畫面（不會扮演學生或改動任何座號資料）"
+                        >
+                          <span>👁️ 檢視畫面</span>
                         </button>
                       </div>
                     </div>

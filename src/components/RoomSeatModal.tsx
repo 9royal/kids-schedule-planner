@@ -1,5 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { usePlannerStore } from '../store/usePlannerStore';
+import {
+  usePlannerStore,
+  SAMPLE_NAMES,
+  SAMPLE_NICKNAMES,
+} from '../store/usePlannerStore';
 import {
   formatLeaderboardDisplayName,
   maskMiddleNameWithCircle,
@@ -7,7 +11,7 @@ import {
   DEFAULT_ACTIVITY_TEMPLATES,
 } from '../data/categories';
 import { NameDisplayPreference } from '../types/schedule';
-import { compressAvatarImage } from '../utils/avatarCompressor';
+import { compressAvatarImage, generateDefaultAvatar } from '../utils/avatarCompressor';
 import {
   RubyText,
   fetchZhuyinFromMoedictApi,
@@ -57,6 +61,8 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
     removeTemplate,
     restoreDefaultTemplates,
     maxSeatCount,
+    leaderboardMap,
+    allClassroomsMap,
   } = usePlannerStore();
 
   const [activeTab, setActiveTab] = useState<'profile' | 'templates'>(initialTab);
@@ -122,6 +128,40 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
       setAvatarMsg(`已裁切 128×128 並壓縮至 ${kb} KB`);
     } catch (err: any) {
       setAvatarMsg(err?.message || '頭像處理失敗');
+    }
+  };
+
+  const handleSelectSeat = (seat: number) => {
+    setSelectedSeat(seat);
+    const cleanTargetRoom = inputRoom.trim() || roomId;
+    const targetLb =
+      cleanTargetRoom === roomId
+        ? leaderboardMap
+        : allClassroomsMap[cleanTargetRoom]?.leaderboardMap || {};
+    const existing = targetLb[seat];
+
+    // 若點選的座號已經有真實學生登錄，直接載入該座號原本的姓名／暱稱／頭像，防止拿舊座號的名字覆蓋別人！
+    if (existing && !existing.isSimulated) {
+      setInputName(existing.name);
+      setInputNickname(existing.nickname || '');
+      setDisplayPref(existing.displayPreference || 'nickname');
+      setAvatarPreview(existing.avatarUrl);
+      return;
+    }
+
+    // 若目前欄位仍是系統預設範例姓名（使用者尚未手打自己的真實姓名），切換座號時同步更新為該座號對應的預設頭像與範例名
+    const isUsingDefaultSampleName =
+      !inputName.trim() || SAMPLE_NAMES.includes(inputName.trim());
+    if (isUsingDefaultSampleName) {
+      const nextDefaultName =
+        SAMPLE_NAMES[(seat - 1) % SAMPLE_NAMES.length] || `${seat}號同學`;
+      const nextDefaultNick =
+        SAMPLE_NICKNAMES[seat] || `${nextDefaultName.slice(-2)}`;
+      setInputName(nextDefaultName);
+      setInputNickname(nextDefaultNick);
+      setAvatarPreview(generateDefaultAvatar(seat, nextDefaultName));
+    } else if (avatarPreview.startsWith('data:image/svg+xml')) {
+      setAvatarPreview(generateDefaultAvatar(seat, inputName.trim()));
     }
   };
 
@@ -440,22 +480,85 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
                 {Array.from({ length: maxSeatCount }).map((_, idx) => {
                   const seat = idx + 1;
                   const isSelected = selectedSeat === seat;
+                  const cleanTargetRoom = inputRoom.trim() || roomId;
+                  const targetLb =
+                    cleanTargetRoom === roomId
+                      ? leaderboardMap
+                      : allClassroomsMap[cleanTargetRoom]?.leaderboardMap || {};
+                  const seatEntry = targetLb[seat];
+                  const isOccupiedByReal = Boolean(
+                    seatEntry && !seatEntry.isSimulated
+                  );
+
                   return (
                     <button
                       type="button"
                       key={seat}
-                      onClick={() => setSelectedSeat(seat)}
-                      className={`h-8 rounded-xl font-black text-xs transition flex items-center justify-center cursor-pointer ${
+                      onClick={() => handleSelectSeat(seat)}
+                      title={
+                        isOccupiedByReal
+                          ? `${seat} 號已登錄：${seatEntry.nickname || seatEntry.name}`
+                          : `${seat} 號（尚無學生登錄）`
+                      }
+                      className={`h-8 rounded-xl font-black text-xs transition flex items-center justify-center relative cursor-pointer ${
                         isSelected
                           ? 'bg-amber-500 text-white shadow-sm scale-105 ring-2 ring-amber-300'
+                          : isOccupiedByReal
+                          ? 'bg-emerald-50 text-emerald-900 border border-emerald-300 hover:bg-emerald-100'
                           : 'bg-white text-slate-700 border border-slate-200 hover:bg-amber-50 hover:border-amber-300'
                       }`}
                     >
-                      {seat}
+                      <span>{seat}</span>
+                      {isOccupiedByReal && (
+                        <span
+                          className={`w-1.5 h-1.5 rounded-full absolute top-1 right-1 ${
+                            isSelected ? 'bg-white' : 'bg-emerald-500'
+                          }`}
+                        />
+                      )}
                     </button>
                   );
                 })}
               </div>
+
+              {/* 座號切換防呆提示：清楚告知是「搬移座號（舊座號消失）」還是「該座號已有人登錄」 */}
+              {(() => {
+                const cleanTargetRoom = inputRoom.trim() || roomId;
+                const targetLb =
+                  cleanTargetRoom === roomId
+                    ? leaderboardMap
+                    : allClassroomsMap[cleanTargetRoom]?.leaderboardMap || {};
+                const targetEntry = targetLb[selectedSeat];
+                const isOccupiedOther =
+                  selectedSeat !== student.seatNumber &&
+                  targetEntry &&
+                  !targetEntry.isSimulated;
+
+                if (isOccupiedOther) {
+                  return (
+                    <div className="mt-2 px-3 py-2 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 text-xs font-bold">
+                      ⚠️ 注意：<strong>{selectedSeat} 號</strong>目前已有同學「
+                      <strong>{targetEntry.nickname || targetEntry.name}</strong>
+                      」登錄！系統已自動載入該座號的資料，不會拿舊座號的名字把對方蓋掉。
+                    </div>
+                  );
+                }
+                if (
+                  !isFirstTimeOnboarding &&
+                  cleanTargetRoom === roomId &&
+                  selectedSeat !== student.seatNumber
+                ) {
+                  return (
+                    <div className="mt-2 px-3 py-2 rounded-xl bg-sky-50 border border-sky-200 text-sky-900 text-xs font-bold">
+                      🔄 您正在將座號由 <strong>{student.seatNumber} 號</strong>改為{' '}
+                      <strong>{selectedSeat} 號</strong>：按下儲存後，原本的{' '}
+                      <strong>{student.seatNumber} 號</strong>會自動從排行榜移除並搬移至{' '}
+                      <strong>{selectedSeat} 號</strong>（不會留下兩個分身）！
+                    </div>
+                  );
+                }
+                return null;
+              })()}
             </div>
 
             <div className="flex justify-end gap-2 pt-2">

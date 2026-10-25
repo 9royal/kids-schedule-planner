@@ -31,7 +31,7 @@ export const DEFAULT_FIREBASE_CONFIG: FirebaseConfigInput = {
   projectId: 'kids-planner-c7e84',
 };
 
-const SAMPLE_NAMES = [
+export const SAMPLE_NAMES = [
   '林小宇', '陳品妍', '張宥廷', '黃子晴', '李承恩', '吳語彤', '王品睿', '劉芷瑜',
   '蔡宇軒', '楊詠晴', '許哲瑋', '鄭心妤', '謝宥辰', '郭采潔', '洪宇澤', '邱子涵',
   '曾品碩', '廖思妤', '賴柏翰', '徐若瑄', '周子軒', '葉品希', '蘇宥安', '莊語昕',
@@ -39,7 +39,7 @@ const SAMPLE_NAMES = [
   '朱宇航', '鍾芷晴', '彭承翰', '游語安', '詹柏宇', '胡子晴', '施宥廷', '沈品妍',
 ];
 
-const SAMPLE_NICKNAMES: Record<number, string> = {
+export const SAMPLE_NICKNAMES: Record<number, string> = {
   1: '小宇隊長',
   2: '妍妍星星',
   3: '宥廷超人',
@@ -360,9 +360,10 @@ interface PlannerStore {
   removeLeaderboardStudent: (seatNumber: number) => void;
   clearOtherLeaderboardStudents: () => void;
 
-  // Teacher Multi-Classroom Management Actions (無須扮演學生即可管理所有班級)
+  // Teacher Multi-Classroom Management Actions (無須扮演學生即可管理與唯讀檢視所有班級)
   setTeacherPin: (pin: string) => void;
   refreshAllClassrooms: () => void;
+  previewClassroomAsTeacher: (targetRoomId: string) => void;
   createOrUpdateClassroom: (targetRoomId: string, maxSeatCount?: number) => void;
   deleteClassroom: (targetRoomId: string) => void;
   removeStudentFromRoom: (targetRoomId: string, seatNumber: number) => void;
@@ -581,6 +582,22 @@ function persistAndSyncStudent(
   const activeWeekKey = getWeekKeyByOffset(activeWeekOffset);
   const currentWeekSchedule = schedulesByWeek[currentWeekKey] || createStarterSchedule();
   const activeSchedule = schedulesByWeek[activeWeekKey] || createStarterSchedule();
+
+  const isTeacherUrl =
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('mode') === 'teacher';
+
+  // 若為教師檢視模式 (?mode=teacher)，老師操作畫面僅供示範與預覽，絕不寫入或覆蓋任何學生座號至排行榜與雲端！
+  if (isTeacherUrl) {
+    const latency = Math.max(1, Math.round(performance.now() - t0));
+    setStore({
+      schedule: activeSchedule,
+      schedulesByWeek,
+      templates,
+      lastSyncLatencyMs: latency,
+    });
+    return;
+  }
 
   try {
     localStorage.setItem(
@@ -846,6 +863,9 @@ export const usePlannerStore = create<PlannerStore>((setState, getState) => {
     teacherPin: savedTeacherPin,
 
     setRoomAndStudent: (roomId, seatNumber, customName, customNickname, displayPref) => {
+      const prevState = getState();
+      const prevRoom = prevState.roomId;
+      const prevSeat = prevState.student.seatNumber;
       const cleanRoom = roomId.trim() || '301';
       const studentData = loadStudentDataFromStorage(cleanRoom, seatNumber);
       if (customName && customName.trim()) {
@@ -857,7 +877,22 @@ export const usePlannerStore = create<PlannerStore>((setState, getState) => {
       if (displayPref) {
         studentData.info.displayPreference = displayPref;
       }
-      const roomLb = loadRoomLeaderboardFromStorage(cleanRoom);
+      const roomLb = { ...loadRoomLeaderboardFromStorage(cleanRoom) };
+
+      // 若同一位學生在同班級「更改座號」（例如從 5 號改選 6 號），自動將舊座號 (5號) 從排行榜與雲端移除，搬移至新座號，避免排行榜留下分身！
+      if (prevState.hasCompletedOnboarding && prevRoom === cleanRoom && prevSeat !== seatNumber) {
+        delete roomLb[prevSeat];
+        saveRoomLeaderboardToStorage(cleanRoom, roomLb);
+        if (prevState.syncMode === 'firebase' && firebaseDb) {
+          set(ref(firebaseDb, `/rooms/${cleanRoom}/leaderboard/${prevSeat}`), null).catch((e) =>
+            console.warn(e)
+          );
+          set(ref(firebaseDb, `/rooms/${cleanRoom}/students/${prevSeat}`), null).catch((e) =>
+            console.warn(e)
+          );
+        }
+      }
+
       const maxSeatsMap = loadRoomMaxSeatsRegistry();
       const roomMaxSeats = maxSeatsMap[cleanRoom] || getState().maxSeatCount || 40;
       const activeWeekKey = getWeekKeyByOffset(0);
@@ -1001,6 +1036,41 @@ export const usePlannerStore = create<PlannerStore>((setState, getState) => {
 
     refreshAllClassrooms: () => {
       setState({ allClassroomsMap: loadAllClassroomsFromStorage() });
+    },
+
+    previewClassroomAsTeacher: (targetRoomId) => {
+      const cleanRoom = targetRoomId.trim() || '301';
+      const roomLb = loadRoomLeaderboardFromStorage(cleanRoom);
+      const maxSeatsMap = loadRoomMaxSeatsRegistry();
+      const roomMaxSeats = maxSeatsMap[cleanRoom] || 40;
+
+      setState({
+        roomId: cleanRoom,
+        maxSeatCount: roomMaxSeats,
+        leaderboardMap: roomLb,
+        allClassroomsMap: loadAllClassroomsFromStorage(),
+      });
+
+      // 若已連線 Firebase，切換監聽該班級的雲端排行榜（唯讀監聽，絕不寫入任何學生座號）
+      if (getState().syncMode === 'firebase' && firebaseDb) {
+        const nextLbPath = `/rooms/${cleanRoom}/leaderboard`;
+        if (activeLeaderboardPath && activeLeaderboardPath !== nextLbPath) {
+          off(ref(firebaseDb, activeLeaderboardPath));
+        }
+        activeLeaderboardPath = nextLbPath;
+        onValue(ref(firebaseDb, nextLbPath), (snapshot) => {
+          const val = snapshot.val();
+          const nextVal = val && typeof val === 'object' ? val : {};
+          saveRoomLeaderboardToStorage(cleanRoom, nextVal);
+          if (getState().roomId === cleanRoom) {
+            setState({
+              leaderboardMap: nextVal,
+              allClassroomsMap: loadAllClassroomsFromStorage(),
+              firebaseConnected: true,
+            });
+          }
+        });
+      }
     },
 
     createOrUpdateClassroom: (targetRoomId, maxSeatCount) => {

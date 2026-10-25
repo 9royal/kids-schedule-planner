@@ -48,6 +48,10 @@ export const LeaderboardPanel: React.FC<LeaderboardPanelProps> = ({
 
   const [quoteIdx, setQuoteIdx] = useState(0);
 
+  const isTeacherMode =
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('mode') === 'teacher';
+
   const myDisplayPref = student.displayPreference || 'nickname';
 
   const activeCategoryObj =
@@ -280,7 +284,7 @@ export const LeaderboardPanel: React.FC<LeaderboardPanelProps> = ({
             {topList.map((entry, idx) => {
               const score = getScoreForEntry(entry, selectedCategory);
               const pct = Math.min(100, Math.round((score / maxScore) * 100));
-              const isMe = entry.seatNumber === student.seatNumber;
+              const isMe = !isTeacherMode && entry.seatNumber === student.seatNumber;
               const medalColors = [
                 'bg-amber-400 text-amber-950 ring-2 ring-amber-200',
                 'bg-slate-300 text-slate-900 ring-2 ring-slate-200',
