@@ -878,9 +878,17 @@ export const usePlannerStore = create<PlannerStore>((setState, getState) => {
         studentData.info.displayPreference = displayPref;
       }
       const roomLb = { ...loadRoomLeaderboardFromStorage(cleanRoom) };
+      const wasTargetOccupiedByReal = Boolean(
+        roomLb[seatNumber] && !roomLb[seatNumber].isSimulated
+      );
 
-      // 若同一位學生在同班級「更改座號」（例如從 5 號改選 6 號），自動將舊座號 (5號) 從排行榜與雲端移除，搬移至新座號，避免排行榜留下分身！
-      if (prevState.hasCompletedOnboarding && prevRoom === cleanRoom && prevSeat !== seatNumber) {
+      // 若同一位學生在同班級「選錯座號要搬移至空座號」（例如從 5 號改選空的 6 號），自動將舊座號 (5號) 從排行榜與雲端移除，搬移至新座號，避免排行榜留下分身！
+      if (
+        prevState.hasCompletedOnboarding &&
+        prevRoom === cleanRoom &&
+        prevSeat !== seatNumber &&
+        !wasTargetOccupiedByReal
+      ) {
         delete roomLb[prevSeat];
         saveRoomLeaderboardToStorage(cleanRoom, roomLb);
         if (prevState.syncMode === 'firebase' && firebaseDb) {

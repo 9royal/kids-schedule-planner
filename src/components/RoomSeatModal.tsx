@@ -79,6 +79,12 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
   const [localFocusEnd, setLocalFocusEnd] = useState(focusEndHour);
   const [localSnap, setLocalSnap] = useState<15 | 30>(snapMinutes);
 
+  // 已登錄座號的防搶用／防干擾鎖定與本人換機驗證狀態
+  const [unlockedSeatNumber, setUnlockedSeatNumber] = useState<number | null>(null);
+  const [showOwnerVerify, setShowOwnerVerify] = useState(false);
+  const [ownerVerifyInput, setOwnerVerifyInput] = useState('');
+  const [ownerVerifyError, setOwnerVerifyError] = useState<string | null>(null);
+
   // 檢查是否由「學生專屬連結 (?role=student)」進入：若是，鎖定班級欄位且完全不顯示教師後台入口
   const isStrictStudentLink =
     typeof window !== 'undefined' &&
@@ -104,6 +110,10 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
       setLocalFocusStart(focusStartHour);
       setLocalFocusEnd(focusEndHour);
       setLocalSnap(snapMinutes);
+      setUnlockedSeatNumber(null);
+      setShowOwnerVerify(false);
+      setOwnerVerifyInput('');
+      setOwnerVerifyError(null);
     }
   }, [
     isOpen,
@@ -133,6 +143,10 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
 
   const handleSelectSeat = (seat: number) => {
     setSelectedSeat(seat);
+    setShowOwnerVerify(false);
+    setOwnerVerifyInput('');
+    setOwnerVerifyError(null);
+
     const cleanTargetRoom = inputRoom.trim() || roomId;
     const targetLb =
       cleanTargetRoom === roomId
@@ -140,12 +154,17 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
         : allClassroomsMap[cleanTargetRoom]?.leaderboardMap || {};
     const existing = targetLb[seat];
 
-    // 若點選的座號已經有真實學生登錄，直接載入該座號原本的姓名／暱稱／頭像，防止拿舊座號的名字覆蓋別人！
+    // 若點選的是自己原本的座號，還原為自己的資料
+    if (!isFirstTimeOnboarding && cleanTargetRoom === roomId && seat === student.seatNumber) {
+      setInputName(student.name);
+      setInputNickname(student.nickname || '');
+      setDisplayPref(student.displayPreference || 'nickname');
+      setAvatarPreview(student.avatarUrl);
+      return;
+    }
+
+    // 若點選的座號已經有其他真實學生登錄：不自動帶入對方的真實姓名（保護隱私且鎖定送出按鈕），必須通過本人真實姓名驗證才載入
     if (existing && !existing.isSimulated) {
-      setInputName(existing.name);
-      setInputNickname(existing.nickname || '');
-      setDisplayPref(existing.displayPreference || 'nickname');
-      setAvatarPreview(existing.avatarUrl);
       return;
     }
 
@@ -165,8 +184,40 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
     }
   };
 
+  const cleanTargetRoomForLock = inputRoom.trim() || roomId;
+  const targetLbForLock =
+    cleanTargetRoomForLock === roomId
+      ? leaderboardMap
+      : allClassroomsMap[cleanTargetRoomForLock]?.leaderboardMap || {};
+  const targetSeatEntry = targetLbForLock[selectedSeat];
+  const isOccupiedByOtherStudent = Boolean(
+    targetSeatEntry &&
+      !targetSeatEntry.isSimulated &&
+      (isFirstTimeOnboarding ||
+        cleanTargetRoomForLock !== roomId ||
+        selectedSeat !== student.seatNumber)
+  );
+  const isSeatLocked =
+    isOccupiedByOtherStudent && unlockedSeatNumber !== selectedSeat;
+
+  const handleVerifySeatOwner = () => {
+    if (!targetSeatEntry) return;
+    if (ownerVerifyInput.trim() === targetSeatEntry.name.trim()) {
+      setUnlockedSeatNumber(selectedSeat);
+      setInputName(targetSeatEntry.name);
+      setInputNickname(targetSeatEntry.nickname || '');
+      setDisplayPref(targetSeatEntry.displayPreference || 'nickname');
+      setAvatarPreview(targetSeatEntry.avatarUrl);
+      setShowOwnerVerify(false);
+      setOwnerVerifyError(null);
+    } else {
+      setOwnerVerifyError('輸入的真實姓名與該座號原登錄資料不符，無法解鎖！');
+    }
+  };
+
   const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSeatLocked) return;
     setFocusHours(localFocusStart, Math.max(localFocusStart + 1, localFocusEnd));
     setSnapMinutes(localSnap);
     setRoomAndStudent(inputRoom, selectedSeat, inputName, inputNickname, displayPref);
@@ -521,44 +572,71 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
                 })}
               </div>
 
-              {/* 座號切換防呆提示：清楚告知是「搬移座號（舊座號消失）」還是「該座號已有人登錄」 */}
-              {(() => {
-                const cleanTargetRoom = inputRoom.trim() || roomId;
-                const targetLb =
-                  cleanTargetRoom === roomId
-                    ? leaderboardMap
-                    : allClassroomsMap[cleanTargetRoom]?.leaderboardMap || {};
-                const targetEntry = targetLb[selectedSeat];
-                const isOccupiedOther =
-                  selectedSeat !== student.seatNumber &&
-                  targetEntry &&
-                  !targetEntry.isSimulated;
+              {/* 座號切換防呆與防干擾鎖定提示 */}
+              {isSeatLocked && targetSeatEntry ? (
+                <div className="mt-2 p-3 rounded-2xl bg-rose-50 border-2 border-rose-300 text-rose-950 text-xs space-y-2">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="font-black flex items-center gap-1.5">
+                      <Lock className="w-4 h-4 text-rose-600 shrink-0" />
+                      <span>
+                        🔒 <strong>{selectedSeat} 號</strong>已由同學「
+                        <strong>
+                          {targetSeatEntry.nickname ||
+                            maskMiddleNameWithCircle(targetSeatEntry.name)}
+                        </strong>
+                        」登錄鎖定！為避免兩位同學的資料互相干擾，禁止直接選用或送出修改。
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowOwnerVerify((v) => !v)}
+                      className="px-2.5 py-1 rounded-lg bg-white hover:bg-rose-100 border border-rose-300 text-rose-800 font-black text-[11px] shrink-0 cursor-pointer"
+                    >
+                      🔑 我是 {selectedSeat} 號本人（換電腦/平板登入）
+                    </button>
+                  </div>
 
-                if (isOccupiedOther) {
-                  return (
-                    <div className="mt-2 px-3 py-2 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 text-xs font-bold">
-                      ⚠️ 注意：<strong>{selectedSeat} 號</strong>目前已有同學「
-                      <strong>{targetEntry.nickname || targetEntry.name}</strong>
-                      」登錄！系統已自動載入該座號的資料，不會拿舊座號的名字把對方蓋掉。
+                  {showOwnerVerify && (
+                    <div className="p-2.5 rounded-xl bg-white border border-rose-200 flex flex-wrap items-center gap-2">
+                      <span className="font-bold text-slate-700">
+                        請輸入 {selectedSeat} 號原登記的「完整真實姓名」驗證：
+                      </span>
+                      <input
+                        type="text"
+                        value={ownerVerifyInput}
+                        onChange={(e) => setOwnerVerifyInput(e.target.value)}
+                        placeholder={`例如：${maskMiddleNameWithCircle(targetSeatEntry.name)}`}
+                        className="rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-black text-slate-800 focus:outline-none focus:border-rose-400"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleVerifySeatOwner}
+                        className="px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-black text-xs cursor-pointer"
+                      >
+                        驗證解鎖
+                      </button>
+                      {ownerVerifyError && (
+                        <span className="text-rose-600 font-bold w-full">
+                          ⚠️ {ownerVerifyError}
+                        </span>
+                      )}
                     </div>
-                  );
-                }
-                if (
-                  !isFirstTimeOnboarding &&
-                  cleanTargetRoom === roomId &&
-                  selectedSeat !== student.seatNumber
-                ) {
-                  return (
-                    <div className="mt-2 px-3 py-2 rounded-xl bg-sky-50 border border-sky-200 text-sky-900 text-xs font-bold">
-                      🔄 您正在將座號由 <strong>{student.seatNumber} 號</strong>改為{' '}
-                      <strong>{selectedSeat} 號</strong>：按下儲存後，原本的{' '}
-                      <strong>{student.seatNumber} 號</strong>會自動從排行榜移除並搬移至{' '}
-                      <strong>{selectedSeat} 號</strong>（不會留下兩個分身）！
-                    </div>
-                  );
-                }
-                return null;
-              })()}
+                  )}
+                </div>
+              ) : isOccupiedByOtherStudent && unlockedSeatNumber === selectedSeat ? (
+                <div className="mt-2 px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-900 text-xs font-bold">
+                  ✅ 已通過 <strong>{selectedSeat} 號</strong>本人真實姓名驗證！按下儲存即可在此設備登入您的座號。
+                </div>
+              ) : !isFirstTimeOnboarding &&
+                cleanTargetRoomForLock === roomId &&
+                selectedSeat !== student.seatNumber ? (
+                <div className="mt-2 px-3 py-2 rounded-xl bg-sky-50 border border-sky-200 text-sky-900 text-xs font-bold">
+                  🔄 您正在將座號由 <strong>{student.seatNumber} 號</strong>改為空位{' '}
+                  <strong>{selectedSeat} 號</strong>：按下儲存後，原本的{' '}
+                  <strong>{student.seatNumber} 號</strong>會自動從排行榜移除並搬移至{' '}
+                  <strong>{selectedSeat} 號</strong>（不會留下兩個分身）！
+                </div>
+              ) : null}
             </div>
 
             <div className="flex justify-end gap-2 pt-2">
@@ -573,14 +651,30 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
               )}
               <button
                 type="submit"
-                className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-black shadow-sm inline-flex items-center gap-1.5 cursor-pointer"
+                disabled={isSeatLocked}
+                className={`px-5 py-2.5 rounded-xl text-xs font-black shadow-sm inline-flex items-center gap-1.5 transition ${
+                  isSeatLocked
+                    ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
+                    : 'bg-amber-500 hover:bg-amber-600 text-white cursor-pointer'
+                }`}
               >
-                <Check className="w-4 h-4" />
-                <span>
-                  {isFirstTimeOnboarding
-                    ? `完成首次設定並記住（班級 ${inputRoom} · ${selectedSeat} 號）`
-                    : `儲存個人設定（班級 ${inputRoom} · ${selectedSeat} 號）`}
-                </span>
+                {isSeatLocked ? (
+                  <>
+                    <Lock className="w-4 h-4" />
+                    <span>
+                      🔒 {selectedSeat} 號已由同學登錄鎖定（禁止送出修改）
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-4 h-4" />
+                    <span>
+                      {isFirstTimeOnboarding
+                        ? `完成首次設定並記住（班級 ${inputRoom} · ${selectedSeat} 號）`
+                        : `儲存個人設定（班級 ${inputRoom} · ${selectedSeat} 號）`}
+                    </span>
+                  </>
+                )}
               </button>
             </div>
           </form>
