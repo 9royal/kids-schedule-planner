@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { usePlannerStore } from '../store/usePlannerStore';
+import { usePlannerStore, DEFAULT_FIREBASE_CONFIG } from '../store/usePlannerStore';
 import { formatLeaderboardDisplayName, PARENT_CATEGORIES } from '../data/categories';
 import {
   Lock,
@@ -91,9 +91,15 @@ export const TeacherAdminModal: React.FC<TeacherAdminModalProps> = ({
 
   // Firebase 設定表單
   const [showFirebaseConfig, setShowFirebaseConfig] = useState(false);
-  const [dbUrl, setDbUrl] = useState('');
-  const [apiKey, setApiKey] = useState('');
-  const [projectId, setProjectId] = useState('');
+  const [dbUrl, setDbUrl] = useState(
+    firebaseConfig?.databaseURL || DEFAULT_FIREBASE_CONFIG.databaseURL
+  );
+  const [apiKey, setApiKey] = useState(
+    firebaseConfig?.apiKey || DEFAULT_FIREBASE_CONFIG.apiKey
+  );
+  const [projectId, setProjectId] = useState(
+    firebaseConfig?.projectId || DEFAULT_FIREBASE_CONFIG.projectId
+  );
   const [fbError, setFbError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -187,8 +193,14 @@ export const TeacherAdminModal: React.FC<TeacherAdminModalProps> = ({
       typeof window !== 'undefined'
         ? `${window.location.origin}${window.location.pathname}`
         : 'https://9royal.github.io/kids-schedule-planner/';
+    // 若使用系統內建的預設全校資料庫，學生點開網址就會自動連線，無須附加冗長的 &db= 參數；僅在老師改用其他自訂資料庫時才附加
+    const isCustomDb =
+      firebaseConnected &&
+      firebaseConfig?.databaseURL &&
+      firebaseConfig.databaseURL.replace(/\/$/, '') !==
+        DEFAULT_FIREBASE_CONFIG.databaseURL.replace(/\/$/, '');
     const dbParam =
-      firebaseConnected && firebaseConfig?.databaseURL
+      isCustomDb && firebaseConfig?.databaseURL
         ? `&db=${encodeURIComponent(firebaseConfig.databaseURL)}`
         : '';
     return `${baseUrl}?room=${encodeURIComponent(targetRoom)}&role=student${dbParam}`;

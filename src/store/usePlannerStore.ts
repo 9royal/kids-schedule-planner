@@ -21,6 +21,16 @@ import { generateDefaultAvatar } from '../utils/avatarCompressor';
 const STORAGE_PREFIX = 'kids_schedule_planner_v2_';
 const CHANNEL_NAME = 'kids_schedule_realtime_channel';
 
+/**
+ * 全校所有班級預設共用的 Firebase Realtime Database 設定
+ * 不同班級會自動分流在 /rooms/{roomId} 底下，學生與老師打開網頁即自動跨裝置同步
+ */
+export const DEFAULT_FIREBASE_CONFIG: FirebaseConfigInput = {
+  apiKey: 'demo-key',
+  databaseURL: 'https://kids-planner-c7e84-default-rtdb.firebaseio.com',
+  projectId: 'kids-planner-c7e84',
+};
+
 const SAMPLE_NAMES = [
   '林小宇', '陳品妍', '張宥廷', '黃子晴', '李承恩', '吳語彤', '王品睿', '劉芷瑜',
   '蔡宇軒', '楊詠晴', '許哲瑋', '鄭心妤', '謝宥辰', '郭采潔', '洪宇澤', '邱子涵',
@@ -874,6 +884,29 @@ export const usePlannerStore = create<PlannerStore>((setState, getState) => {
         leaderboardMap: roomLb,
         selectedBlockId: null,
       });
+
+      // 若已連線 Firebase 且切換了班級，重新掛載該班級的即時排行榜監聽器
+      if (getState().syncMode === 'firebase' && firebaseDb) {
+        const nextLbPath = `/rooms/${cleanRoom}/leaderboard`;
+        if (activeLeaderboardPath && activeLeaderboardPath !== nextLbPath) {
+          off(ref(firebaseDb, activeLeaderboardPath));
+        }
+        activeLeaderboardPath = nextLbPath;
+        onValue(ref(firebaseDb, nextLbPath), (snapshot) => {
+          const val = snapshot.val();
+          if (val && typeof val === 'object') {
+            saveRoomLeaderboardToStorage(cleanRoom, val);
+            if (getState().roomId === cleanRoom) {
+              setState({
+                leaderboardMap: val,
+                allClassroomsMap: loadAllClassroomsFromStorage(),
+                firebaseConnected: true,
+              });
+            }
+          }
+        });
+      }
+
       persistAndSyncStudent(
         cleanRoom,
         studentData.info,
@@ -1791,16 +1824,22 @@ export const usePlannerStore = create<PlannerStore>((setState, getState) => {
           firebaseConfig: config,
         });
 
-        persistAndSyncStudent(
-          state.roomId,
-          state.student,
-          state.schedulesByWeek,
-          state.selectedWeekOffset,
-          state.templates,
-          'firebase',
-          state.leaderboardMap,
-          setState
-        );
+        // 僅在「非教師管理後台入口」且「已完成首次學生資料設定」時才將本機學生資料推上雲端，避免老師進入後台時誤產生 1號學生
+        const isTeacherUrl =
+          typeof window !== 'undefined' &&
+          new URLSearchParams(window.location.search).get('mode') === 'teacher';
+        if (state.hasCompletedOnboarding && !isTeacherUrl) {
+          persistAndSyncStudent(
+            state.roomId,
+            state.student,
+            state.schedulesByWeek,
+            state.selectedWeekOffset,
+            state.templates,
+            'firebase',
+            state.leaderboardMap,
+            setState
+          );
+        }
       } catch (err) {
         console.error('Firebase initialization failed:', err);
         throw err;
@@ -1830,7 +1869,7 @@ export const usePlannerStore = create<PlannerStore>((setState, getState) => {
   };
 });
 
-// 啟動時若網址帶有 ?db=https://xxx.firebaseio.com（學生點擊老師的雲端班級連結）或本機曾儲存過 Firebase 設定，自動連線雲端！
+// 啟動時自動連線全校預設 Firebase Realtime Database（亦支援 ?db= 參數或自訂儲存設定）
 if (typeof window !== 'undefined') {
   setTimeout(() => {
     try {
@@ -1852,8 +1891,11 @@ if (typeof window !== 'undefined') {
         const parsed = JSON.parse(savedFb);
         if (parsed?.databaseURL) {
           usePlannerStore.getState().connectFirebase(parsed);
+          return;
         }
       }
+      // 預設直接連線全校共用的 Realtime Database (https://kids-planner-c7e84-default-rtdb.firebaseio.com)
+      usePlannerStore.getState().connectFirebase(DEFAULT_FIREBASE_CONFIG);
     } catch {
       // ignore auto-connect errors
     }
