@@ -85,6 +85,14 @@ export interface LeaderboardEntry {
   otherMinutes: number;
   dailyBreakdown?: Record<number, Record<ParentCategoryId, number>>;
   lastUpdated: number;
+  isSimulated?: boolean; // 標記是否為系統預設/壓力測試模擬之座號（false 或 undefined 代表真實加入的學生）
+}
+
+export interface ClassroomSummaryInfo {
+  roomId: string;
+  maxSeatCount: number;
+  leaderboardMap: Record<number, LeaderboardEntry>;
+  lastActiveAt: number;
 }
 
 export interface FirebaseConfigInput {

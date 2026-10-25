@@ -14,30 +14,26 @@ import {
   fetchEnglishFromTranslationApi,
 } from '../utils/zhuyin';
 import {
-  Cloud,
-  Wifi,
   Check,
   X,
   ShieldCheck,
   Settings,
   UserCheck,
   Puzzle,
-  Users,
   Camera,
   Trash2,
   RotateCcw,
   Sparkles,
   Globe,
-  Download,
-  Link2,
-  Copy,
+  Lock,
 } from 'lucide-react';
 
 interface RoomSeatModalProps {
   isOpen: boolean;
   onClose: () => void;
-  initialTab?: 'profile' | 'templates' | 'classroom';
+  initialTab?: 'profile' | 'templates';
   isFirstTimeOnboarding?: boolean;
+  onOpenTeacherAdmin?: () => void;
 }
 
 export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
@@ -45,6 +41,7 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
   onClose,
   initialTab = 'profile',
   isFirstTimeOnboarding = false,
+  onOpenTeacherAdmin,
 }) => {
   const {
     roomId,
@@ -60,21 +57,9 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
     removeTemplate,
     restoreDefaultTemplates,
     maxSeatCount,
-    setMaxSeatCount,
-    leaderboardMap,
-    removeLeaderboardStudent,
-    clearOtherLeaderboardStudents,
-    simulate40Students,
-    syncMode,
-    firebaseConnected,
-    connectFirebase,
-    disconnectFirebase,
-    schedulesByWeek,
   } = usePlannerStore();
 
-  const [activeTab, setActiveTab] = useState<'profile' | 'templates' | 'classroom'>(
-    initialTab
-  );
+  const [activeTab, setActiveTab] = useState<'profile' | 'templates'>(initialTab);
   const [inputRoom, setInputRoom] = useState(roomId);
   const [selectedSeat, setSelectedSeat] = useState(student.seatNumber);
   const [inputName, setInputName] = useState(student.name);
@@ -88,31 +73,16 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
   const [localFocusEnd, setLocalFocusEnd] = useState(focusEndHour);
   const [localSnap, setLocalSnap] = useState<15 | 30>(snapMinutes);
 
-  // API 測試工具狀態（管理介面分頁 2）
+  // 檢查是否由「學生專屬連結 (?role=student)」進入：若是，鎖定班級欄位且完全不顯示教師後台入口
+  const isStrictStudentLink =
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('role') === 'student';
+
+  // API 測試工具狀態（分頁 2）
   const [testPhrase, setTestPhrase] = useState('烏克麗麗社團');
   const [testZhuyin, setTestZhuyin] = useState('');
   const [testEnglish, setTestEnglish] = useState('');
   const [isTestingApi, setIsTestingApi] = useState(false);
-
-  // 班級 40 人模擬狀態（管理介面分頁 3）
-  const [isSimulating, setIsSimulating] = useState(false);
-
-  // 學生專屬純淨模式（若網址帶有 ?role=student 則預設隱藏「3. 班級名單管理」教師後台）
-  const [isStudentMode, setIsStudentMode] = useState<boolean>(() => {
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      return params.get('role') === 'student';
-    }
-    return false;
-  });
-  const [copiedLinkMsg, setCopiedLinkMsg] = useState<string | null>(null);
-
-  // Optional Firebase Config fields
-  const [showFirebaseConfig, setShowFirebaseConfig] = useState(false);
-  const [dbUrl, setDbUrl] = useState('');
-  const [apiKey, setApiKey] = useState('');
-  const [projectId, setProjectId] = useState('');
-  const [fbError, setFbError] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -178,42 +148,6 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
     setIsTestingApi(false);
   };
 
-  const handleExportScheduleJson = () => {
-    const payload = {
-      exportedAt: new Date().toISOString(),
-      roomId,
-      student,
-      schedulesByWeek,
-      templates,
-    };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], {
-      type: 'application/json',
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `kids-schedule-${roomId}-seat${student.seatNumber}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const handleConnectFirebase = () => {
-    setFbError(null);
-    if (!dbUrl.trim() || !projectId.trim()) {
-      setFbError('請輸入 Firebase Database URL 與 Project ID');
-      return;
-    }
-    try {
-      connectFirebase({
-        apiKey: apiKey.trim() || 'demo-key',
-        databaseURL: dbUrl.trim(),
-        projectId: projectId.trim(),
-      });
-    } catch (err: any) {
-      setFbError(err?.message || '連線失敗');
-    }
-  };
-
   const previewMasked = maskMiddleNameWithCircle(inputName || student.name);
   const previewLeaderboardLabel = formatLeaderboardDisplayName(
     inputName || student.name,
@@ -241,26 +175,26 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
               <h2 className="text-base sm:text-lg font-black text-slate-900">
                 {isFirstTimeOnboarding
                   ? '👋 歡迎使用！首次個人資料與作息偏好設定'
-                  : '⚙️ 個人資料與系統管理介面'}
+                  : '⚙️ 個人資料與作息偏好設定'}
               </h2>
               <p className="text-xs font-bold text-amber-800">
                 {isFirstTimeOnboarding
                   ? '第一次設定完成後，系統會自動記住你的班級、座號、暱稱與偏好，之後開啟免重複設定！'
-                  : '集中管理個人班級座號、排行榜顯示偏好、活動積木庫（含萌典/翻譯API）與班級名單'}
+                  : '管理個人座號、暱稱、頭像、排行榜顯示偏好與自訂活動積木庫'}
               </p>
             </div>
           </div>
 
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-full bg-white hover:bg-slate-100 flex items-center justify-center text-slate-600 font-bold shrink-0"
+            className="w-8 h-8 rounded-full bg-white hover:bg-slate-100 flex items-center justify-center text-slate-600 font-bold shrink-0 cursor-pointer"
             title="關閉視窗"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Management Sub-Tabs (Shown when not in first-time onboarding, or allow switching) */}
+        {/* Sub-Tabs (僅保留學生個人設定與活動積木庫，學生無法切換至教師後台) */}
         {!isFirstTimeOnboarding && (
           <div className="px-6 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-2 overflow-x-auto">
             <div className="flex items-center gap-2 shrink-0">
@@ -288,38 +222,23 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
                 <Puzzle className="w-4 h-4" />
                 <span>2. 活動積木庫 & 注音/翻譯 API ({templates.length})</span>
               </button>
-              {!isStudentMode && (
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('classroom')}
-                  className={`h-9 px-3.5 rounded-xl text-xs font-black inline-flex items-center gap-1.5 border transition cursor-pointer ${
-                    activeTab === 'classroom'
-                      ? 'bg-amber-500 text-white border-amber-500 shadow-2xs'
-                      : 'bg-white text-slate-700 border-slate-200 hover:bg-amber-50'
-                  }`}
-                >
-                  <Users className="w-4 h-4" />
-                  <span>
-                    3. 班級名單與資料管理 ({Object.keys(leaderboardMap).length} 人)
-                  </span>
-                </button>
-              )}
             </div>
 
-            <button
-              type="button"
-              onClick={() => {
-                const nextMode = !isStudentMode;
-                setIsStudentMode(nextMode);
-                if (nextMode && activeTab === 'classroom') {
-                  setActiveTab('profile');
-                }
-              }}
-              className="h-8 px-2.5 rounded-lg bg-white hover:bg-slate-100 border border-slate-300 text-[11px] font-bold text-slate-600 shrink-0 transition cursor-pointer"
-              title="切換預覽「學生純淨介面（隱藏班級管理分頁）」或「教師完整管理介面」"
-            >
-              {isStudentMode ? '👩‍🏫 切換教師管理' : '🎒 預覽學生介面'}
-            </button>
+            {/* 非學生專屬連結時，提供受教師密碼保護的教師後台入口 */}
+            {!isStrictStudentLink && onOpenTeacherAdmin && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onOpenTeacherAdmin();
+                }}
+                className="h-8 px-3 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-800 text-xs font-black inline-flex items-center gap-1.5 shrink-0 transition cursor-pointer"
+                title="進入教師專屬管理後台（需輸入教師密碼）"
+              >
+                <Lock className="w-3.5 h-3.5 text-indigo-600" />
+                <span>👩‍🏫 教師管理後台（需密碼）</span>
+              </button>
+            )}
           </div>
         )}
 
@@ -337,7 +256,7 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center shadow border border-white"
+                  className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center shadow border border-white cursor-pointer"
                   title="上傳自訂大頭貼"
                 >
                   <Camera className="w-3.5 h-3.5" />
@@ -354,15 +273,20 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
               <div className="flex-1 grid grid-cols-1 sm:grid-cols-3 gap-3 w-full">
                 <div>
                   <label className="block text-xs font-black text-slate-700 mb-1">
-                    班級
+                    班級 {isStrictStudentLink && <span className="text-amber-700">(已由班級連結鎖定)</span>}
                   </label>
                   <input
                     type="text"
                     required
+                    readOnly={isStrictStudentLink}
                     value={inputRoom}
                     onChange={(e) => setInputRoom(e.target.value)}
                     placeholder="例如：301 或 三年一班"
-                    className="w-full rounded-xl border-2 border-slate-200 bg-white px-3 py-1.5 text-sm font-black text-slate-800 focus:outline-none focus:border-amber-400"
+                    className={`w-full rounded-xl border-2 px-3 py-1.5 text-sm font-black focus:outline-none ${
+                      isStrictStudentLink
+                        ? 'border-amber-200 bg-amber-100/60 text-slate-700 cursor-not-allowed'
+                        : 'border-slate-200 bg-white text-slate-800 focus:border-amber-400'
+                    }`}
                   />
                 </div>
 
@@ -409,7 +333,7 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
                   <button
                     type="button"
                     onClick={() => setDisplayPref('nickname')}
-                    className={`px-3 py-1 rounded-lg font-black transition ${
+                    className={`px-3 py-1 rounded-lg font-black transition cursor-pointer ${
                       displayPref === 'nickname'
                         ? 'bg-emerald-600 text-white shadow-2xs'
                         : 'text-slate-600 hover:bg-slate-100'
@@ -420,7 +344,7 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
                   <button
                     type="button"
                     onClick={() => setDisplayPref('name')}
-                    className={`px-3 py-1 rounded-lg font-black transition ${
+                    className={`px-3 py-1 rounded-lg font-black transition cursor-pointer ${
                       displayPref === 'name'
                         ? 'bg-emerald-600 text-white shadow-2xs'
                         : 'text-slate-600 hover:bg-slate-100'
@@ -477,7 +401,7 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
                   <button
                     type="button"
                     onClick={() => setLocalSnap(15)}
-                    className={`px-3 py-1 rounded-lg font-black transition ${
+                    className={`px-3 py-1 rounded-lg font-black transition cursor-pointer ${
                       localSnap === 15
                         ? 'bg-amber-500 text-white'
                         : 'text-slate-600 hover:bg-slate-100'
@@ -488,7 +412,7 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
                   <button
                     type="button"
                     onClick={() => setLocalSnap(30)}
-                    className={`px-3 py-1 rounded-lg font-black transition ${
+                    className={`px-3 py-1 rounded-lg font-black transition cursor-pointer ${
                       localSnap === 30
                         ? 'bg-amber-500 text-white'
                         : 'text-slate-600 hover:bg-slate-100'
@@ -508,7 +432,7 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
                   <span className="text-amber-600 text-sm">{selectedSeat} 號</span>
                 </label>
                 <span className="text-[11px] font-bold text-slate-500">
-                  儲存後系統將自動記住此座號與個資（可於「3. 班級名單管理」調整全班人數上限）
+                  儲存後系統將自動記住此座號與個資
                 </span>
               </div>
 
@@ -521,7 +445,7 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
                       type="button"
                       key={seat}
                       onClick={() => setSelectedSeat(seat)}
-                      className={`h-8 rounded-xl font-black text-xs transition flex items-center justify-center ${
+                      className={`h-8 rounded-xl font-black text-xs transition flex items-center justify-center cursor-pointer ${
                         isSelected
                           ? 'bg-amber-500 text-white shadow-sm scale-105 ring-2 ring-amber-300'
                           : 'bg-white text-slate-700 border border-slate-200 hover:bg-amber-50 hover:border-amber-300'
@@ -539,14 +463,14 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
                 <button
                   type="button"
                   onClick={onClose}
-                  className="px-4 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-600 hover:bg-slate-100"
+                  className="px-4 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-600 hover:bg-slate-100 cursor-pointer"
                 >
                   取消
                 </button>
               )}
               <button
                 type="submit"
-                className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-black shadow-sm inline-flex items-center gap-1.5"
+                className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-black shadow-sm inline-flex items-center gap-1.5 cursor-pointer"
               >
                 <Check className="w-4 h-4" />
                 <span>
@@ -586,7 +510,7 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
                   type="button"
                   onClick={handleRunApiTest}
                   disabled={isTestingApi}
-                  className="px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-black shrink-0 transition"
+                  className="px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-black shrink-0 transition cursor-pointer"
                 >
                   {isTestingApi ? 'API 查詢中...' : '測試連線轉換'}
                 </button>
@@ -618,7 +542,7 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
                   <button
                     type="button"
                     onClick={restoreDefaultTemplates}
-                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black transition"
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black transition cursor-pointer"
                   >
                     <RotateCcw className="w-3.5 h-3.5" />
                     <span>一鍵還原所有預設活動</span>
@@ -653,7 +577,7 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
                       <button
                         type="button"
                         onClick={() => removeTemplate(tpl.id)}
-                        className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-50 transition shrink-0"
+                        className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-50 transition shrink-0 cursor-pointer"
                         title="刪除此活動積木"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -662,262 +586,6 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
                   );
                 })}
               </div>
-            </div>
-          </div>
-        )}
-
-        {/* Tab 3: Classroom & Data Management */}
-        {activeTab === 'classroom' && (
-          <div className="p-5 overflow-y-auto space-y-4 text-xs">
-            {/* Student Dedicated Invite Link Generator */}
-            <div className="p-3.5 rounded-2xl bg-emerald-50/90 border border-emerald-200 space-y-2">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <div className="font-black text-emerald-950 text-sm flex items-center gap-1.5">
-                    <Link2 className="w-4 h-4 text-emerald-600" />
-                    <span>🎒 本班學生專屬使用連結（班級 {roomId}）</span>
-                  </div>
-                  <div className="text-emerald-800 font-bold text-[11px]">
-                    學生點擊此連結會自動帶入「班級 {roomId}」並開啟「學生純淨介面」（自動隱藏班級管理與踢人後台）
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    const baseUrl =
-                      typeof window !== 'undefined'
-                        ? `${window.location.origin}${window.location.pathname}`
-                        : 'https://9royal.github.io/kids-schedule-planner/';
-                    const studentUrl = `${baseUrl}?room=${encodeURIComponent(roomId)}&role=student`;
-                    navigator.clipboard?.writeText(studentUrl);
-                    setCopiedLinkMsg(`已複製連結：${studentUrl}`);
-                    setTimeout(() => setCopiedLinkMsg(null), 4000);
-                  }}
-                  className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black inline-flex items-center gap-1.5 shadow-2xs transition cursor-pointer"
-                >
-                  <Copy className="w-3.5 h-3.5" />
-                  <span>一鍵複製學生專屬連結</span>
-                </button>
-              </div>
-              {copiedLinkMsg && (
-                <div className="text-[11px] font-black text-emerald-800 bg-white px-3 py-1.5 rounded-xl border border-emerald-200 break-all">
-                  ✅ {copiedLinkMsg}
-                </div>
-              )}
-            </div>
-
-            {/* Classroom Headcount / Seat Limit & System Capacity Overview */}
-            <div className="p-3.5 rounded-2xl bg-amber-50/80 border border-amber-200 space-y-2.5">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <div className="font-black text-amber-950 text-sm">
-                    🏫 班級座號上限與人數管控設定
-                  </div>
-                  <div className="text-amber-800 font-bold text-[11px]">
-                    班級數量無上限（輸入不同班級代號即自動獨立分流）；單班座號上限可依實際班級人數調整
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="font-black text-slate-700">單班座號上限：</span>
-                  {[20, 25, 30, 35, 40, 50, 60].map((cnt) => (
-                    <button
-                      key={cnt}
-                      type="button"
-                      onClick={() => setMaxSeatCount(cnt)}
-                      className={`px-2.5 py-1 rounded-lg font-black transition ${
-                        maxSeatCount === cnt
-                          ? 'bg-amber-500 text-white shadow-2xs'
-                          : 'bg-white text-slate-700 border border-amber-200 hover:bg-amber-100'
-                      }`}
-                    >
-                      {cnt}人
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Actions Bar */}
-            <div className="flex flex-wrap items-center justify-between gap-2 p-3.5 rounded-2xl bg-indigo-50/80 border border-indigo-200">
-              <div>
-                <div className="font-black text-indigo-950 text-sm">
-                  班級 {roomId} 排行榜與壓力測試管理
-                </div>
-                <div className="text-indigo-700 font-bold">
-                  目前班級共有 {Object.keys(leaderboardMap).length} 位同學同步中（座號上限 {maxSeatCount} 號）
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2 flex-wrap">
-                <button
-                  type="button"
-                  disabled={isSimulating}
-                  onClick={async () => {
-                    setIsSimulating(true);
-                    await simulate40Students();
-                    setIsSimulating(false);
-                  }}
-                  className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black inline-flex items-center gap-1.5 shadow-2xs transition cursor-pointer"
-                >
-                  <Users className="w-4 h-4" />
-                  <span>
-                    {isSimulating
-                      ? `正在同步 ${maxSeatCount} 人...`
-                      : `一鍵模擬全班 ${maxSeatCount} 人排課`}
-                  </span>
-                </button>
-
-                {Object.keys(leaderboardMap).length > 1 && (
-                  <button
-                    type="button"
-                    onClick={clearOtherLeaderboardStudents}
-                    className="px-3.5 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-black inline-flex items-center gap-1.5 transition cursor-pointer"
-                    title="移除所有模擬或其他座號，僅保留目前登入的座號"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                    <span>清空其他測試座號（僅留本人）</span>
-                  </button>
-                )}
-
-                <button
-                  type="button"
-                  onClick={handleExportScheduleJson}
-                  className="px-3.5 py-2 rounded-xl bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 font-black inline-flex items-center gap-1.5 transition cursor-pointer"
-                >
-                  <Download className="w-4 h-4" />
-                  <span>匯出課表備份 JSON</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Class Student List */}
-            <div className="space-y-2">
-              <div className="font-black text-slate-800">
-                班級成員清單（可移除非本班測試座號）
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[210px] overflow-y-auto p-1">
-                {Object.values(leaderboardMap)
-                  .sort((a, b) => a.seatNumber - b.seatNumber)
-                  .map((entry) => {
-                    const isMe = entry.seatNumber === student.seatNumber;
-                    return (
-                      <div
-                        key={entry.seatNumber}
-                        className="p-2.5 rounded-xl border border-slate-200 bg-white flex items-center justify-between gap-2"
-                      >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <img
-                            src={entry.avatarUrl}
-                            alt={entry.name}
-                            className="w-7 h-7 rounded-full object-cover border border-slate-200 shrink-0"
-                          />
-                          <div className="min-w-0">
-                            <div className="font-black text-slate-800 truncate">
-                              {entry.seatNumber}號{' '}
-                              {formatLeaderboardDisplayName(
-                                entry.name,
-                                entry.nickname,
-                                entry.displayPreference || 'nickname'
-                              )}
-                              {isMe && (
-                                <span className="ml-1 text-[10px] bg-amber-500 text-white px-1.5 py-0.5 rounded-full">
-                                  目前使用者
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-
-                        {!isMe && (
-                          <button
-                            type="button"
-                            onClick={() => removeLeaderboardStudent(entry.seatNumber)}
-                            className="p-1 text-slate-400 hover:text-rose-600 rounded-lg"
-                            title="從排行榜移除此座號"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
-              </div>
-            </div>
-
-            {/* Cloud / Local Sync Mode Section */}
-            <div className="rounded-2xl border border-slate-200 p-3.5 bg-slate-50/70 space-y-2">
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <div className="flex items-center gap-2">
-                  {firebaseConnected ? (
-                    <Cloud className="w-4 h-4 text-emerald-600" />
-                  ) : (
-                    <Wifi className="w-4 h-4 text-blue-600" />
-                  )}
-                  <span className="text-xs font-black text-slate-800">
-                    同步引擎狀態：
-                    {firebaseConnected
-                      ? 'Firebase Realtime Database 雲端即時連線'
-                      : '本機自動儲存 + 多視窗即時同步'}
-                  </span>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => setShowFirebaseConfig(!showFirebaseConfig)}
-                  className="text-xs font-bold text-blue-600 hover:underline"
-                >
-                  {showFirebaseConfig ? '隱藏 Firebase 設定' : '設定 Firebase 雲端連線'}
-                </button>
-              </div>
-
-              {showFirebaseConfig && (
-                <div className="pt-2 border-t border-slate-200 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
-                  <input
-                    type="text"
-                    placeholder="databaseURL (https://xxx.firebaseio.com)"
-                    value={dbUrl}
-                    onChange={(e) => setDbUrl(e.target.value)}
-                    className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 font-medium sm:col-span-2"
-                  />
-                  <input
-                    type="text"
-                    placeholder="projectId"
-                    value={projectId}
-                    onChange={(e) => setProjectId(e.target.value)}
-                    className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 font-medium"
-                  />
-                  <input
-                    type="text"
-                    placeholder="apiKey (選填)"
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 font-medium sm:col-span-2"
-                  />
-                  <div className="flex gap-1.5">
-                    <button
-                      type="button"
-                      onClick={handleConnectFirebase}
-                      className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg py-1.5"
-                    >
-                      連線雲端
-                    </button>
-                    {syncMode === 'firebase' && (
-                      <button
-                        type="button"
-                        onClick={disconnectFirebase}
-                        className="px-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold rounded-lg"
-                      >
-                        切回本機
-                      </button>
-                    )}
-                  </div>
-                  {fbError && (
-                    <div className="sm:col-span-3 text-rose-600 font-bold">{fbError}</div>
-                  )}
-                </div>
-              )}
             </div>
           </div>
         )}

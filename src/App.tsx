@@ -10,6 +10,7 @@ import { WeeklyPuzzlePlanner } from './components/WeeklyPuzzlePlanner';
 import { ActivityPaletteDrawer } from './components/ActivityPaletteDrawer';
 import { LeaderboardPanel } from './components/LeaderboardPanel';
 import { RoomSeatModal } from './components/RoomSeatModal';
+import { TeacherAdminModal } from './components/TeacherAdminModal';
 import { CalendarImportModal } from './components/CalendarImportModal';
 import { ParentCategoryId } from './types/schedule';
 import {
@@ -64,12 +65,21 @@ export function PlannerApp() {
     'weekly'
   );
 
-  // 若使用者是第一次使用 (!hasCompletedOnboarding)，自動開啟首次個資與偏好設定頁面；設定完成後永久記住，之後使用免重複設定
+  // 檢查是否為教師專屬後台網址 (?mode=teacher)
+  const isTeacherUrlEntry =
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('mode') === 'teacher';
+
+  const [isTeacherAdminOpen, setIsTeacherAdminOpen] = useState<boolean>(
+    () => isTeacherUrlEntry
+  );
+
+  // 若使用者是第一次使用 (!hasCompletedOnboarding) 且非教師後台入口，自動開啟首次個資與偏好設定頁面；設定完成後永久記住，之後使用免重複設定
   const [isRoomModalOpen, setIsRoomModalOpen] = useState<boolean>(
-    () => !hasCompletedOnboarding
+    () => !hasCompletedOnboarding && !isTeacherUrlEntry
   );
   const [isFirstTimeFlow, setIsFirstTimeFlow] = useState<boolean>(
-    () => !hasCompletedOnboarding
+    () => !hasCompletedOnboarding && !isTeacherUrlEntry
   );
   const [isCalendarModalOpen, setIsCalendarModalOpen] = useState(false);
   const [focusScrollTrigger, setFocusScrollTrigger] = useState(0);
@@ -336,11 +346,16 @@ export function PlannerApp() {
         )}
       </main>
 
-      {/* 首次使用設定精靈 & 系統管理介面 Modal */}
+      {/* 學生個人資料設定精靈 & 獨立教師全班級管理後台 Modal */}
       <RoomSeatModal
         isOpen={isRoomModalOpen}
         onClose={handleCloseManagementModal}
         isFirstTimeOnboarding={isFirstTimeFlow}
+        onOpenTeacherAdmin={() => setIsTeacherAdminOpen(true)}
+      />
+      <TeacherAdminModal
+        isOpen={isTeacherAdminOpen}
+        onClose={() => setIsTeacherAdminOpen(false)}
       />
       <CalendarImportModal
         isOpen={isCalendarModalOpen}

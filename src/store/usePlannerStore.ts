@@ -3,6 +3,7 @@ import { initializeApp, FirebaseApp, getApps } from 'firebase/app';
 import { getDatabase, ref, set, onValue, Database, off } from 'firebase/database';
 import {
   ActivityTemplate,
+  ClassroomSummaryInfo,
   FirebaseConfigInput,
   LeaderboardEntry,
   NameDisplayPreference,
@@ -333,6 +334,8 @@ interface PlannerStore {
   // Leaderboard Data & Classroom Seat Limit Control
   maxSeatCount: number;
   leaderboardMap: Record<number, LeaderboardEntry>;
+  allClassroomsMap: Record<string, ClassroomSummaryInfo>;
+  teacherPin: string;
 
   // Actions
   setRoomAndStudent: (
@@ -346,6 +349,16 @@ interface PlannerStore {
   setMaxSeatCount: (count: number) => void;
   removeLeaderboardStudent: (seatNumber: number) => void;
   clearOtherLeaderboardStudents: () => void;
+
+  // Teacher Multi-Classroom Management Actions (無須扮演學生即可管理所有班級)
+  setTeacherPin: (pin: string) => void;
+  refreshAllClassrooms: () => void;
+  createOrUpdateClassroom: (targetRoomId: string, maxSeatCount?: number) => void;
+  deleteClassroom: (targetRoomId: string) => void;
+  removeStudentFromRoom: (targetRoomId: string, seatNumber: number) => void;
+  clearSimulatedInRoom: (targetRoomId: string) => void;
+  simulateStudentsInRoom: (targetRoomId: string) => Promise<number>;
+
   updateStudentProfile: (updates: Partial<StudentInfo>) => void;
   setSnapMinutes: (snap: 15 | 30) => void;
   setFocusHours: (startHour: number, endHour: number) => void;
@@ -389,6 +402,25 @@ let broadcastChannel: BroadcastChannel | null = null;
 let firebaseApp: FirebaseApp | null = null;
 let firebaseDb: Database | null = null;
 let activeLeaderboardPath: string | null = null;
+let activeAllRoomsPath: string | null = null;
+
+function loadRoomMaxSeatsRegistry(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(`${STORAGE_PREFIX}room_max_seats_map`);
+    if (raw) return JSON.parse(raw);
+  } catch {
+    // ignore
+  }
+  return { '301': 40 };
+}
+
+function saveRoomMaxSeatsRegistry(map: Record<string, number>) {
+  try {
+    localStorage.setItem(`${STORAGE_PREFIX}room_max_seats_map`, JSON.stringify(map));
+  } catch {
+    // ignore
+  }
+}
 
 function loadRoomLeaderboardFromStorage(roomId: string): Record<number, LeaderboardEntry> {
   try {
@@ -403,9 +435,52 @@ function loadRoomLeaderboardFromStorage(roomId: string): Record<number, Leaderbo
 function saveRoomLeaderboardToStorage(roomId: string, map: Record<number, LeaderboardEntry>) {
   try {
     localStorage.setItem(`${STORAGE_PREFIX}room_${roomId}_leaderboard`, JSON.stringify(map));
+    const maxSeatsMap = loadRoomMaxSeatsRegistry();
+    if (!maxSeatsMap[roomId]) {
+      maxSeatsMap[roomId] = Number(localStorage.getItem(`${STORAGE_PREFIX}max_seat_count`)) || 40;
+      saveRoomMaxSeatsRegistry(maxSeatsMap);
+    }
   } catch {
     // ignore
   }
+}
+
+function loadAllClassroomsFromStorage(): Record<string, ClassroomSummaryInfo> {
+  const result: Record<string, ClassroomSummaryInfo> = {};
+  const maxSeatsMap = loadRoomMaxSeatsRegistry();
+  const roomIds = new Set<string>(Object.keys(maxSeatsMap));
+
+  try {
+    const prefix = `${STORAGE_PREFIX}room_`;
+    const suffix = `_leaderboard`;
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(prefix) && k.endsWith(suffix)) {
+        const extractedRoom = k.slice(prefix.length, k.length - suffix.length);
+        if (extractedRoom) roomIds.add(extractedRoom);
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  for (const rId of roomIds) {
+    const lb = loadRoomLeaderboardFromStorage(rId);
+    let lastActive = 0;
+    for (const entry of Object.values(lb)) {
+      if (entry.lastUpdated && entry.lastUpdated > lastActive) {
+        lastActive = entry.lastUpdated;
+      }
+    }
+    result[rId] = {
+      roomId: rId,
+      maxSeatCount: maxSeatsMap[rId] || 40,
+      leaderboardMap: lb,
+      lastActiveAt: lastActive,
+    };
+  }
+
+  return result;
 }
 
 function loadFocusHoursFromStorage(): { start: number; end: number } {
@@ -528,6 +603,7 @@ function persistAndSyncStudent(
     otherMinutes: totals.other,
     dailyBreakdown,
     lastUpdated: Date.now(),
+    isSimulated: false,
   };
 
   const nextLeaderboard = {
@@ -566,6 +642,7 @@ function persistAndSyncStudent(
     schedulesByWeek,
     templates,
     leaderboardMap: nextLeaderboard,
+    allClassroomsMap: loadAllClassroomsFromStorage(),
     lastSyncLatencyMs: latency,
   });
 }
@@ -651,6 +728,7 @@ export const usePlannerStore = create<PlannerStore>((setState, getState) => {
       otherMinutes: totals.other,
       dailyBreakdown,
       lastUpdated: Date.now(),
+      isSimulated: false,
     };
     for (let s = 2; s <= 7; s++) {
       if (s === initialSeat) continue;
@@ -678,6 +756,7 @@ export const usePlannerStore = create<PlannerStore>((setState, getState) => {
         sleepMinutes: sleep,
         otherMinutes: 60,
         lastUpdated: Date.now() - s * 10000,
+        isSimulated: true,
       };
     }
     saveRoomLeaderboardToStorage(initialRoomId, initialLeaderboard);
@@ -689,20 +768,41 @@ export const usePlannerStore = create<PlannerStore>((setState, getState) => {
       const data = ev.data;
       if (!data) return;
       const state = getState();
-      if (data.type === 'LEADERBOARD_UPDATE' && data.roomId === state.roomId) {
-        setState({
-          leaderboardMap: {
-            ...state.leaderboardMap,
-            [data.entry.seatNumber]: data.entry,
-          },
-        });
-      } else if (data.type === 'BULK_LEADERBOARD_UPDATE' && data.roomId === state.roomId) {
-        setState({
-          leaderboardMap: data.leaderboardMap,
-        });
+      if (data.type === 'LEADERBOARD_UPDATE') {
+        const nextAll = loadAllClassroomsFromStorage();
+        if (data.roomId === state.roomId) {
+          setState({
+            leaderboardMap: {
+              ...state.leaderboardMap,
+              [data.entry.seatNumber]: data.entry,
+            },
+            allClassroomsMap: nextAll,
+          });
+        } else {
+          setState({ allClassroomsMap: nextAll });
+        }
+      } else if (data.type === 'BULK_LEADERBOARD_UPDATE') {
+        const nextAll = loadAllClassroomsFromStorage();
+        if (data.roomId === state.roomId) {
+          setState({
+            leaderboardMap: data.leaderboardMap,
+            allClassroomsMap: nextAll,
+          });
+        } else {
+          setState({ allClassroomsMap: nextAll });
+        }
       }
     };
   }
+
+  const initialMaxSeatsMap = loadRoomMaxSeatsRegistry();
+  const initialMaxSeatCount =
+    initialMaxSeatsMap[initialRoomId] ||
+    Number(localStorage.getItem(`${STORAGE_PREFIX}max_seat_count`)) ||
+    40;
+  const savedTeacherPin =
+    (typeof window !== 'undefined' && localStorage.getItem(`${STORAGE_PREFIX}teacher_pin`)) ||
+    '8888';
 
   return {
     roomId: initialRoomId,
@@ -730,8 +830,10 @@ export const usePlannerStore = create<PlannerStore>((setState, getState) => {
     isLeaderboardCollapsed: false,
     isPaletteOpen: true,
 
-    maxSeatCount: Number(localStorage.getItem(`${STORAGE_PREFIX}max_seat_count`)) || 40,
+    maxSeatCount: initialMaxSeatCount,
     leaderboardMap: initialLeaderboard,
+    allClassroomsMap: loadAllClassroomsFromStorage(),
+    teacherPin: savedTeacherPin,
 
     setRoomAndStudent: (roomId, seatNumber, customName, customNickname, displayPref) => {
       const cleanRoom = roomId.trim() || '301';
@@ -746,6 +848,8 @@ export const usePlannerStore = create<PlannerStore>((setState, getState) => {
         studentData.info.displayPreference = displayPref;
       }
       const roomLb = loadRoomLeaderboardFromStorage(cleanRoom);
+      const maxSeatsMap = loadRoomMaxSeatsRegistry();
+      const roomMaxSeats = maxSeatsMap[cleanRoom] || getState().maxSeatCount || 40;
       const activeWeekKey = getWeekKeyByOffset(0);
       const activeSched = studentData.schedulesByWeek[activeWeekKey] || createStarterSchedule();
 
@@ -766,6 +870,7 @@ export const usePlannerStore = create<PlannerStore>((setState, getState) => {
         undoStack: [],
         redoStack: [],
         templates: studentData.templates,
+        maxSeatCount: roomMaxSeats,
         leaderboardMap: roomLb,
         selectedBlockId: null,
       });
@@ -794,12 +899,19 @@ export const usePlannerStore = create<PlannerStore>((setState, getState) => {
 
     setMaxSeatCount: (count) => {
       const cleanCount = Math.max(5, Math.min(60, Math.floor(count)));
+      const state = getState();
       try {
         localStorage.setItem(`${STORAGE_PREFIX}max_seat_count`, String(cleanCount));
+        const maxSeatsMap = loadRoomMaxSeatsRegistry();
+        maxSeatsMap[state.roomId] = cleanCount;
+        saveRoomMaxSeatsRegistry(maxSeatsMap);
       } catch {
         // ignore
       }
-      setState({ maxSeatCount: cleanCount });
+      setState({
+        maxSeatCount: cleanCount,
+        allClassroomsMap: loadAllClassroomsFromStorage(),
+      });
     },
 
     removeLeaderboardStudent: (seatNumber) => {
@@ -808,7 +920,10 @@ export const usePlannerStore = create<PlannerStore>((setState, getState) => {
       const nextLb = { ...state.leaderboardMap };
       delete nextLb[seatNumber];
       saveRoomLeaderboardToStorage(state.roomId, nextLb);
-      setState({ leaderboardMap: nextLb });
+      setState({
+        leaderboardMap: nextLb,
+        allClassroomsMap: loadAllClassroomsFromStorage(),
+      });
       if (state.syncMode === 'firebase' && firebaseDb) {
         const roomLbRef = ref(firebaseDb, `/rooms/${state.roomId}/leaderboard`);
         set(roomLbRef, nextLb).catch((e) => console.warn(e));
@@ -835,7 +950,215 @@ export const usePlannerStore = create<PlannerStore>((setState, getState) => {
         const roomLbRef = ref(firebaseDb, `/rooms/${state.roomId}/leaderboard`);
         set(roomLbRef, nextLb).catch((e) => console.warn(e));
       }
-      setState({ leaderboardMap: nextLb });
+      setState({
+        leaderboardMap: nextLb,
+        allClassroomsMap: loadAllClassroomsFromStorage(),
+      });
+    },
+
+    setTeacherPin: (pin) => {
+      const cleanPin = pin.trim() || '8888';
+      try {
+        localStorage.setItem(`${STORAGE_PREFIX}teacher_pin`, cleanPin);
+      } catch {
+        // ignore
+      }
+      setState({ teacherPin: cleanPin });
+    },
+
+    refreshAllClassrooms: () => {
+      setState({ allClassroomsMap: loadAllClassroomsFromStorage() });
+    },
+
+    createOrUpdateClassroom: (targetRoomId, maxSeatCount) => {
+      const cleanRoom = targetRoomId.trim();
+      if (!cleanRoom) return;
+      const state = getState();
+      const maxSeatsMap = loadRoomMaxSeatsRegistry();
+      const targetMax = maxSeatCount
+        ? Math.max(5, Math.min(60, Math.floor(maxSeatCount)))
+        : maxSeatsMap[cleanRoom] || 40;
+      maxSeatsMap[cleanRoom] = targetMax;
+      saveRoomMaxSeatsRegistry(maxSeatsMap);
+
+      const existingLb = loadRoomLeaderboardFromStorage(cleanRoom);
+      saveRoomLeaderboardToStorage(cleanRoom, existingLb);
+
+      if (state.syncMode === 'firebase' && firebaseDb) {
+        const roomMetaRef = ref(firebaseDb, `/rooms/${cleanRoom}/maxSeatCount`);
+        set(roomMetaRef, targetMax).catch((e) => console.warn(e));
+      }
+
+      setState({
+        maxSeatCount: cleanRoom === state.roomId ? targetMax : state.maxSeatCount,
+        allClassroomsMap: loadAllClassroomsFromStorage(),
+      });
+    },
+
+    deleteClassroom: (targetRoomId) => {
+      const cleanRoom = targetRoomId.trim();
+      if (!cleanRoom) return;
+      const state = getState();
+      try {
+        localStorage.removeItem(`${STORAGE_PREFIX}room_${cleanRoom}_leaderboard`);
+        const maxSeatsMap = loadRoomMaxSeatsRegistry();
+        delete maxSeatsMap[cleanRoom];
+        saveRoomMaxSeatsRegistry(maxSeatsMap);
+      } catch {
+        // ignore
+      }
+      if (state.syncMode === 'firebase' && firebaseDb) {
+        const roomRef = ref(firebaseDb, `/rooms/${cleanRoom}`);
+        set(roomRef, null).catch((e) => console.warn(e));
+      }
+      setState({
+        allClassroomsMap: loadAllClassroomsFromStorage(),
+      });
+    },
+
+    removeStudentFromRoom: (targetRoomId, seatNumber) => {
+      const cleanRoom = targetRoomId.trim();
+      const state = getState();
+      const nextLb = { ...loadRoomLeaderboardFromStorage(cleanRoom) };
+      delete nextLb[seatNumber];
+      saveRoomLeaderboardToStorage(cleanRoom, nextLb);
+      if (broadcastChannel) {
+        broadcastChannel.postMessage({
+          type: 'BULK_LEADERBOARD_UPDATE',
+          roomId: cleanRoom,
+          leaderboardMap: nextLb,
+        });
+      }
+      if (state.syncMode === 'firebase' && firebaseDb) {
+        const roomLbRef = ref(firebaseDb, `/rooms/${cleanRoom}/leaderboard`);
+        set(roomLbRef, nextLb).catch((e) => console.warn(e));
+      }
+      setState({
+        leaderboardMap: cleanRoom === state.roomId ? nextLb : state.leaderboardMap,
+        allClassroomsMap: loadAllClassroomsFromStorage(),
+      });
+    },
+
+    clearSimulatedInRoom: (targetRoomId) => {
+      const cleanRoom = targetRoomId.trim();
+      const state = getState();
+      const currentLb = loadRoomLeaderboardFromStorage(cleanRoom);
+      const nextLb: Record<number, LeaderboardEntry> = {};
+      for (const [seatKey, entry] of Object.entries(currentLb)) {
+        if (!entry.isSimulated) {
+          nextLb[Number(seatKey)] = entry;
+        }
+      }
+      saveRoomLeaderboardToStorage(cleanRoom, nextLb);
+      if (broadcastChannel) {
+        broadcastChannel.postMessage({
+          type: 'BULK_LEADERBOARD_UPDATE',
+          roomId: cleanRoom,
+          leaderboardMap: nextLb,
+        });
+      }
+      if (state.syncMode === 'firebase' && firebaseDb) {
+        const roomLbRef = ref(firebaseDb, `/rooms/${cleanRoom}/leaderboard`);
+        set(roomLbRef, nextLb).catch((e) => console.warn(e));
+      }
+      setState({
+        leaderboardMap: cleanRoom === state.roomId ? nextLb : state.leaderboardMap,
+        allClassroomsMap: loadAllClassroomsFromStorage(),
+      });
+    },
+
+    simulateStudentsInRoom: async (targetRoomId) => {
+      const t0 = performance.now();
+      const cleanRoom = targetRoomId.trim() || getState().roomId;
+      const state = getState();
+      const maxSeatsMap = loadRoomMaxSeatsRegistry();
+      const limit = maxSeatsMap[cleanRoom] || state.maxSeatCount || 40;
+      const currentLb = loadRoomLeaderboardFromStorage(cleanRoom);
+      const nextMap: Record<number, LeaderboardEntry> = { ...currentLb };
+
+      for (let seat = 1; seat <= limit; seat++) {
+        // 保留已加入的真實學生資料，僅針對空座號或模擬座號產生測試排課
+        if (nextMap[seat] && nextMap[seat].isSimulated === false) continue;
+        const sName = SAMPLE_NAMES[(seat - 1) % SAMPLE_NAMES.length] || `${seat}號同學`;
+        const sNick = SAMPLE_NICKNAMES[seat] || `${sName.slice(-2)}`;
+        const rand15 = (min: number, max: number) =>
+          Math.floor((min + Math.random() * (max - min)) / 15) * 15;
+
+        const dailyBreakdown: Record<number, Record<ParentCategoryId, number>> = {};
+        let studyTotal = 0;
+        let schoolTotal = 0;
+        let sportsTotal = 0;
+        let creativeTotal = 0;
+        let dailyTotal = 0;
+        let leisureTotal = 0;
+        let sleepTotal = 0;
+
+        for (let d = 0; d < 7; d++) {
+          const st = rand15(30, 150);
+          const sc = d < 5 ? 390 : 0;
+          const sp = rand15(15, 120);
+          const cr = rand15(15, 105);
+          const da = rand15(60, 150);
+          const le = rand15(30, 120);
+          const sl = 540;
+          dailyBreakdown[d] = {
+            study: st,
+            school: sc,
+            sports: sp,
+            creative: cr,
+            daily: da,
+            leisure: le,
+            sleep: sl,
+            other: 15,
+          };
+          studyTotal += st;
+          schoolTotal += sc;
+          sportsTotal += sp;
+          creativeTotal += cr;
+          dailyTotal += da;
+          leisureTotal += le;
+          sleepTotal += sl;
+        }
+
+        nextMap[seat] = {
+          seatNumber: seat,
+          name: sName,
+          nickname: sNick,
+          displayPreference: 'nickname',
+          avatarUrl: generateDefaultAvatar(seat, sName),
+          studyMinutes: studyTotal,
+          schoolMinutes: schoolTotal,
+          sportsMinutes: sportsTotal,
+          creativeMinutes: creativeTotal,
+          dailyMinutes: dailyTotal,
+          leisureMinutes: leisureTotal,
+          sleepMinutes: sleepTotal,
+          otherMinutes: 105,
+          dailyBreakdown,
+          lastUpdated: Date.now(),
+          isSimulated: true,
+        };
+      }
+
+      saveRoomLeaderboardToStorage(cleanRoom, nextMap);
+      if (broadcastChannel) {
+        broadcastChannel.postMessage({
+          type: 'BULK_LEADERBOARD_UPDATE',
+          roomId: cleanRoom,
+          leaderboardMap: nextMap,
+        });
+      }
+      if (state.syncMode === 'firebase' && firebaseDb) {
+        const roomLbRef = ref(firebaseDb, `/rooms/${cleanRoom}/leaderboard`);
+        await set(roomLbRef, nextMap).catch((e) => console.warn(e));
+      }
+      const elapsed = Math.max(1, Math.round(performance.now() - t0));
+      setState({
+        leaderboardMap: cleanRoom === state.roomId ? nextMap : state.leaderboardMap,
+        allClassroomsMap: loadAllClassroomsFromStorage(),
+        lastSyncLatencyMs: elapsed,
+      });
+      return elapsed;
     },
 
     updateStudentProfile: (updates) => {
@@ -1398,93 +1721,7 @@ export const usePlannerStore = create<PlannerStore>((setState, getState) => {
     },
 
     simulate40Students: async () => {
-      const t0 = performance.now();
-      const state = getState();
-      const nextMap: Record<number, LeaderboardEntry> = { ...state.leaderboardMap };
-      const limit = state.maxSeatCount || 40;
-
-      for (let seat = 1; seat <= limit; seat++) {
-        if (seat === state.student.seatNumber) continue;
-        const sName = SAMPLE_NAMES[seat - 1] || `${seat}號同學`;
-        const sNick = SAMPLE_NICKNAMES[seat] || `${sName.slice(-2)}`;
-        const rand15 = (min: number, max: number) =>
-          Math.floor((min + Math.random() * (max - min)) / 15) * 15;
-
-        const dailyBreakdown: Record<number, Record<ParentCategoryId, number>> = {};
-        let studyTotal = 0;
-        let schoolTotal = 0;
-        let sportsTotal = 0;
-        let creativeTotal = 0;
-        let dailyTotal = 0;
-        let leisureTotal = 0;
-        let sleepTotal = 0;
-
-        for (let d = 0; d < 7; d++) {
-          const st = rand15(30, 150);
-          const sc = d < 5 ? 390 : 0;
-          const sp = rand15(15, 120);
-          const cr = rand15(15, 105);
-          const da = rand15(60, 150);
-          const le = rand15(30, 120);
-          const sl = 540; // 9 hours default sleep
-          dailyBreakdown[d] = {
-            study: st,
-            school: sc,
-            sports: sp,
-            creative: cr,
-            daily: da,
-            leisure: le,
-            sleep: sl,
-            other: 15,
-          };
-          studyTotal += st;
-          schoolTotal += sc;
-          sportsTotal += sp;
-          creativeTotal += cr;
-          dailyTotal += da;
-          leisureTotal += le;
-          sleepTotal += sl;
-        }
-
-        nextMap[seat] = {
-          seatNumber: seat,
-          name: sName,
-          nickname: sNick,
-          displayPreference: 'nickname',
-          avatarUrl: generateDefaultAvatar(seat, sName),
-          studyMinutes: studyTotal,
-          schoolMinutes: schoolTotal,
-          sportsMinutes: sportsTotal,
-          creativeMinutes: creativeTotal,
-          dailyMinutes: dailyTotal,
-          leisureMinutes: leisureTotal,
-          sleepMinutes: sleepTotal,
-          otherMinutes: 105,
-          dailyBreakdown,
-          lastUpdated: Date.now(),
-        };
-      }
-
-      saveRoomLeaderboardToStorage(state.roomId, nextMap);
-      if (broadcastChannel) {
-        broadcastChannel.postMessage({
-          type: 'BULK_LEADERBOARD_UPDATE',
-          roomId: state.roomId,
-          leaderboardMap: nextMap,
-        });
-      }
-
-      if (state.syncMode === 'firebase' && firebaseDb) {
-        const roomLbRef = ref(firebaseDb, `/rooms/${state.roomId}/leaderboard`);
-        await set(roomLbRef, nextMap).catch((e) => console.warn(e));
-      }
-
-      const elapsed = Math.max(1, Math.round(performance.now() - t0));
-      setState({
-        leaderboardMap: nextMap,
-        lastSyncLatencyMs: elapsed,
-      });
-      return elapsed;
+      return getState().simulateStudentsInRoom(getState().roomId);
     },
 
     connectFirebase: (config) => {
@@ -1505,8 +1742,35 @@ export const usePlannerStore = create<PlannerStore>((setState, getState) => {
         onValue(lbRef, (snapshot) => {
           const val = snapshot.val();
           if (val && typeof val === 'object') {
+            saveRoomLeaderboardToStorage(getState().roomId, val);
             setState({
               leaderboardMap: val,
+              allClassroomsMap: loadAllClassroomsFromStorage(),
+              firebaseConnected: true,
+            });
+          }
+        });
+
+        // 監聽全校所有班級 `/rooms`，讓老師後台能即時掌握所有班級與已加入學生人數
+        if (activeAllRoomsPath && firebaseDb) {
+          off(ref(firebaseDb, activeAllRoomsPath));
+        }
+        activeAllRoomsPath = '/rooms';
+        onValue(ref(firebaseDb, '/rooms'), (snapshot) => {
+          const allRoomsVal = snapshot.val();
+          if (allRoomsVal && typeof allRoomsVal === 'object') {
+            const maxSeatsMap = loadRoomMaxSeatsRegistry();
+            for (const [rId, roomData] of Object.entries<any>(allRoomsVal)) {
+              if (roomData?.maxSeatCount) {
+                maxSeatsMap[rId] = Number(roomData.maxSeatCount) || 40;
+              }
+              if (roomData?.leaderboard && typeof roomData.leaderboard === 'object') {
+                saveRoomLeaderboardToStorage(rId, roomData.leaderboard);
+              }
+            }
+            saveRoomMaxSeatsRegistry(maxSeatsMap);
+            setState({
+              allClassroomsMap: loadAllClassroomsFromStorage(),
               firebaseConnected: true,
             });
           }
@@ -1538,6 +1802,10 @@ export const usePlannerStore = create<PlannerStore>((setState, getState) => {
       if (firebaseDb && activeLeaderboardPath) {
         off(ref(firebaseDb, activeLeaderboardPath));
         activeLeaderboardPath = null;
+      }
+      if (firebaseDb && activeAllRoomsPath) {
+        off(ref(firebaseDb, activeAllRoomsPath));
+        activeAllRoomsPath = null;
       }
       setState({
         syncMode: 'local',
