@@ -4,7 +4,10 @@ import {
   getWeekMondayByOffset,
   mergeAdjacentSameActivityBlocks,
 } from '../store/usePlannerStore';
-import { DAYS_OF_WEEK } from '../data/categories';
+import {
+  DAYS_OF_WEEK,
+  formatLeaderboardDisplayName,
+} from '../data/categories';
 import { ScheduleBlock } from '../types/schedule';
 import { RubyText } from '../utils/zhuyin';
 import { CuteActivityIcon } from './CuteActivityIcon';
@@ -15,8 +18,15 @@ import {
   XCircle,
   Undo2,
   Redo2,
+  RotateCcw,
+  Settings,
   ArrowRightLeft,
   MousePointerClick,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  ChevronDown,
+  Move,
 } from 'lucide-react';
 
 const HOUR_WIDTH_PX = 120; // 120px per hour -> 2px per minute (30px per 15 mins, 60px per 30 mins)
@@ -25,6 +35,15 @@ const TOTAL_WIDTH_PX = HOUR_WIDTH_PX * TOTAL_HOURS; // 2880px
 const PX_PER_MINUTE = HOUR_WIDTH_PX / 60;
 const DAY_COL_WIDTH_PX = 116;
 const DRAG_THRESHOLD_PX = 8; // 8px 防誤觸門檻：避免點擊或微小晃動時誤拉伸或誤移位
+
+const QUICK_JUMP_HOURS = [
+  { label: '🌙 00:00 凌晨', hour: 0 },
+  { label: '☀️ 06:00 早晨', hour: 6 },
+  { label: '🏫 08:00 上午', hour: 8 },
+  { label: '🍱 12:00 中午', hour: 12 },
+  { label: '🌆 16:00 放學', hour: 16 },
+  { label: '💤 20:00 晚間', hour: 20 },
+];
 
 function formatHHMM(totalMinutes: number): string {
   const clamped = Math.max(0, Math.min(1440, Math.round(totalMinutes)));
@@ -52,6 +71,15 @@ interface DragInteractionState {
   initialDurationMinutes: number;
 }
 
+interface PanCanvasState {
+  startX: number;
+  startY: number;
+  initialScrollLeft: number;
+  initialScrollTop: number;
+  initialWindowScrollY: number;
+  isPanning: boolean;
+}
+
 interface HoverPreviewState {
   dayIndex: number;
   startMinute: number;
@@ -65,21 +93,26 @@ interface CursorFollowerPos {
 interface WeeklyPuzzlePlannerProps {
   activePaletteTemplateId: string | null;
   onClearPaletteSelection: () => void;
+  onOpenManagementModal: () => void;
   focusScrollTrigger?: number;
 }
 
 export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
   activePaletteTemplateId,
   onClearPaletteSelection,
+  onOpenManagementModal,
   focusScrollTrigger = 0,
 }) => {
   const {
+    roomId,
+    student,
     schedule,
     undoStack,
     redoStack,
     pushUndoSnapshot,
     undoSchedule,
     redoSchedule,
+    resetToStarterSchedule,
     moveBlockToDay,
     templates,
     snapMinutes,
@@ -97,48 +130,74 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
 
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const dragStateRef = useRef<DragInteractionState | null>(null);
+  const panStateRef = useRef<PanCanvasState | null>(null);
   const [dragState, setDragState] = useState<DragInteractionState | null>(null);
+  const [isGrabPanning, setIsGrabPanning] = useState(false);
   const [hoverPreview, setHoverPreview] = useState<HoverPreviewState | null>(null);
   const [cursorPos, setCursorPos] = useState<CursorFollowerPos | null>(null);
 
-  // 防誤放積木：記錄軌道 PointerDown 座標與最後一次積木拖拉結束時間
+  // 防誤放積木：記錄軌道 PointerDown 座標與最後一次積木拖拉／平移結束時間
   const trackPointerDownRef = useRef<{ x: number; y: number } | null>(null);
   const lastBlockInteractionTimeRef = useRef<number>(0);
 
-  // 嚴格對應點選狀態：只有當使用者明確點選右側積木時才啟用放置模式，不再強制 fallback 到第一個積木
+  // 嚴格對應點選狀態：只有當使用者明確點選右側積木時才啟用放置模式
   const activeTemplate = activePaletteTemplateId
     ? templates.find((t) => t.id === activePaletteTemplateId) || null
     : null;
 
   const weekMonday = getWeekMondayByOffset(selectedWeekOffset);
 
+  const displayStudentName = formatLeaderboardDisplayName(
+    student.name,
+    student.nickname,
+    student.displayPreference || 'nickname'
+  );
+
   const updateDragStateBoth = (next: DragInteractionState | null) => {
     dragStateRef.current = next;
     setDragState(next);
   };
 
-  // Smoothly scroll to user-configured focus start hour
-  const scrollToFocusWindow = (
-    startHour = focusStartHour,
+  // Smoothly scroll to target hour
+  const scrollToHour = (
+    targetHour: number,
     behavior: ScrollBehavior = 'smooth'
   ) => {
     const container = scrollContainerRef.current;
     if (!container) return;
-    const targetLeft = startHour * HOUR_WIDTH_PX - 12;
+    const targetLeft = targetHour * HOUR_WIDTH_PX - 12;
     container.scrollTo({
       left: Math.max(0, targetLeft),
       behavior,
     });
   };
 
+  const scrollHorizontalByHours = (deltaHours: number) => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    container.scrollBy({
+      left: deltaHours * HOUR_WIDTH_PX,
+      behavior: 'smooth',
+    });
+  };
+
+  const scrollVerticalByRows = (direction: 'up' | 'down') => {
+    const container = scrollContainerRef.current;
+    const deltaY = direction === 'up' ? -260 : 260;
+    if (container && container.scrollHeight > container.clientHeight + 4) {
+      container.scrollBy({ top: deltaY, behavior: 'smooth' });
+    }
+    window.scrollBy({ top: deltaY, behavior: 'smooth' });
+  };
+
   useEffect(() => {
     const timer = setTimeout(() => {
-      scrollToFocusWindow(focusStartHour, 'smooth');
+      scrollToHour(focusStartHour, 'smooth');
     }, 80);
     return () => clearTimeout(timer);
   }, [focusStartHour, focusScrollTrigger]);
 
-  // 支援鍵盤 Esc 快速放棄積木點選，以及 Ctrl+Z / Cmd+Z 回復上一步
+  // 支援鍵盤 Esc 快速放棄積木點選、Ctrl+Z 回復上一步、以及方向鍵輕鬆上下左右移動時間軸
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -166,6 +225,14 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
         } else {
           undoSchedule();
         }
+      } else if (e.key === 'ArrowLeft') {
+        scrollHorizontalByHours(-2);
+      } else if (e.key === 'ArrowRight') {
+        scrollHorizontalByHours(2);
+      } else if (e.key === 'ArrowUp') {
+        scrollVerticalByRows('up');
+      } else if (e.key === 'ArrowDown') {
+        scrollVerticalByRows('down');
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -187,6 +254,50 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
     }
   }, [activeTemplate]);
 
+  // 空白處按住拖曳平移畫布 (Grab-to-Pan：同時支援左右滑動時間軸與上下捲動頁面)
+  useEffect(() => {
+    if (!isGrabPanning) return;
+
+    const handlePanMove = (e: PointerEvent) => {
+      const pan = panStateRef.current;
+      const container = scrollContainerRef.current;
+      if (!pan || !container) return;
+
+      const dx = e.clientX - pan.startX;
+      const dy = e.clientY - pan.startY;
+      if (!pan.isPanning && Math.hypot(dx, dy) >= 5) {
+        pan.isPanning = true;
+      }
+      if (pan.isPanning) {
+        e.preventDefault();
+        lastBlockInteractionTimeRef.current = Date.now();
+        container.scrollLeft = pan.initialScrollLeft - dx;
+        if (container.scrollHeight > container.clientHeight + 4) {
+          container.scrollTop = pan.initialScrollTop - dy;
+        } else {
+          window.scrollTo({ top: pan.initialWindowScrollY - dy });
+        }
+      }
+    };
+
+    const handlePanUp = () => {
+      if (panStateRef.current?.isPanning) {
+        lastBlockInteractionTimeRef.current = Date.now();
+      }
+      panStateRef.current = null;
+      setIsGrabPanning(false);
+    };
+
+    window.addEventListener('pointermove', handlePanMove, { passive: false });
+    window.addEventListener('pointerup', handlePanUp);
+    window.addEventListener('pointercancel', handlePanUp);
+    return () => {
+      window.removeEventListener('pointermove', handlePanMove);
+      window.removeEventListener('pointerup', handlePanUp);
+      window.removeEventListener('pointercancel', handlePanUp);
+    };
+  }, [isGrabPanning]);
+
   // Resolve overlaps for a modified block against other blocks on the same day,
   // AND automatically merge adjacent blocks if they are the same activity!
   const settleBlockOverlaps = (targetBlockId: string) => {
@@ -207,7 +318,6 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
       const eStart = existing.startMinute;
       const eEnd = existing.startMinute + existing.durationMinutes;
 
-      // 若為相同活動且時間相連或重疊，保留下來交由 mergeAdjacentSameActivityBlocks 自動整併成一個積木
       const isSameActivity =
         existing.name.trim() === movedBlock.name.trim() &&
         existing.parentId === movedBlock.parentId;
@@ -256,12 +366,11 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
       const deltaY = e.clientY - currentDrag.startY;
       const dist = Math.hypot(deltaX, deltaY);
 
-      // 未達 8px 防誤觸門檻前，完全不觸發移動或拉伸，避免單純點選積木時誤拉伸或誤移位
+      // 未達 8px 防誤觸門檻前，完全不觸發移動或拉伸
       if (!currentDrag.hasExceededThreshold) {
         if (dist < DRAG_THRESHOLD_PX) {
           return;
         }
-        // 首次超過門檻：先存入一筆 Undo 歷史紀錄，再開始拖拉或拉伸
         pushUndoSnapshot();
         const activated: DragInteractionState = {
           ...currentDrag,
@@ -295,7 +404,6 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
           }
         }
 
-        // Magnetic puzzle snap to adjacent block edges on the same day (within 15m)
         const currentSchedule = usePlannerStore.getState().schedule;
         const sameDayOthers = currentSchedule.filter(
           (b) => b.dayIndex === targetDayIndex && b.id !== currentDrag.blockId
@@ -425,13 +533,9 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
     e: React.MouseEvent<HTMLDivElement>,
     dayIndex: number
   ) => {
-    // 1. 若點在已存在的積木上，不觸發空白處放置
     if ((e.target as HTMLElement).closest('[data-puzzle-block="true"]')) return;
-
-    // 2. 若剛剛結束積木拖曳或拉伸（280ms 內），忽略此 click 事件，徹底防止拉伸放開滑鼠時誤放新積木
     if (Date.now() - lastBlockInteractionTimeRef.current < 280) return;
 
-    // 3. 若使用者是在滑動捲軸/拖曳畫面（Pointer 移動超過 8px），忽略此 click 事件，防止平板或電腦滑動時誤放積木
     if (trackPointerDownRef.current) {
       const moveDist = Math.hypot(
         e.clientX - trackPointerDownRef.current.x,
@@ -441,7 +545,6 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
       if (moveDist >= DRAG_THRESHOLD_PX) return;
     }
 
-    // 4. 若目前沒有點選右側任何積木，點擊空白處僅取消已選取的課表積木，絕不誤放積木
     if (!activeTemplate) {
       if (selectedBlockId) {
         setSelectedBlockId(null);
@@ -521,7 +624,6 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
     <div
       className="flex-1 min-w-0 bg-white border-2 border-amber-200/90 rounded-2xl shadow-sm flex flex-col overflow-hidden relative"
       onContextMenu={(e) => {
-        // 右鍵可快速放棄目前點選的右側積木
         if (activeTemplate) {
           e.preventDefault();
           onClearPaletteSelection();
@@ -559,10 +661,10 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
         </div>
       )}
 
-      {/* 頂部狀態與工具橫條：包含「快速放棄積木點選」、「回復上一步/重做」與「已選積木直接移到其他天」 */}
-      <div className="px-3 py-1.5 bg-slate-50/95 border-b border-amber-200/80 flex flex-wrap items-center justify-between gap-2 text-xs">
+      {/* 第一列工具橫條：回復上一步、重做、範本課表（在回復與重做右邊）、瀏覽與調整模式提示、以及個資與系統管理介面連結（在瀏覽與調整模式右方） */}
+      <div className="px-3 py-2 bg-slate-50/95 border-b border-amber-200/80 flex flex-wrap items-center justify-between gap-2 text-xs">
         <div className="flex items-center gap-2 flex-wrap">
-          {/* 回復上一步 / 重做下一步按鈕 */}
+          {/* 1. 回復上一步 */}
           <button
             type="button"
             disabled={undoStack.length === 0}
@@ -583,19 +685,34 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
             )}
           </button>
 
-          {redoStack.length > 0 && (
-            <button
-              type="button"
-              onClick={redoSchedule}
-              className="h-8 px-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 font-black inline-flex items-center gap-1 shadow-2xs transition"
-              title="重做下一步 (Ctrl+Shift+Z)"
-            >
-              <Redo2 className="w-3.5 h-3.5 text-slate-600" />
-              <span>重做</span>
-            </button>
-          )}
+          {/* 2. 重做 */}
+          <button
+            type="button"
+            disabled={redoStack.length === 0}
+            onClick={redoSchedule}
+            className={`h-8 px-2.5 rounded-xl border font-black inline-flex items-center gap-1 transition ${
+              redoStack.length > 0
+                ? 'bg-white hover:bg-slate-100 border-slate-300 text-slate-700 shadow-2xs cursor-pointer'
+                : 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
+            }`}
+            title="重做下一步 (Ctrl+Shift+Z)"
+          >
+            <Redo2 className="w-3.5 h-3.5" />
+            <span>重做</span>
+          </button>
 
-          {/* 當有點選右側積木時：顯示目前積木與醒目的「快速放棄積木點選」按鈕 */}
+          {/* 3. 範本課表（移至回復上一步和重做的右邊） */}
+          <button
+            type="button"
+            onClick={resetToStarterSchedule}
+            className="h-8 px-2.5 rounded-xl border border-slate-300 bg-white hover:bg-rose-50 hover:border-rose-300 text-slate-700 hover:text-rose-700 font-black inline-flex items-center gap-1 shadow-2xs transition cursor-pointer"
+            title="還原為預設範本課表（含 22:00-07:00 晚間睡眠）"
+          >
+            <RotateCcw className="w-3.5 h-3.5 shrink-0" />
+            <span>範本課表</span>
+          </button>
+
+          {/* 4. 瀏覽與調整模式說明 / 放棄積木點選 */}
           {activeTemplate ? (
             <div className="flex items-center gap-2 bg-amber-100/90 border-2 border-amber-400 px-2.5 py-1 rounded-xl">
               <span
@@ -620,17 +737,97 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
               </button>
             </div>
           ) : (
-            <span className="text-slate-500 font-bold inline-flex items-center gap-1">
+            <span className="text-slate-600 font-bold inline-flex items-center gap-1">
               <MousePointerClick className="w-3.5 h-3.5 text-amber-600 shrink-0" />
               <span>
                 瀏覽與調整模式（點選課表積木可移至其他天或調整時長；點選右側調色盤積木即可放置）
               </span>
             </span>
           )}
+
+          {/* 5. 個資與系統管理介面連結（移至瀏覽與調整模式右方） */}
+          <button
+            type="button"
+            onClick={onOpenManagementModal}
+            className="h-8 px-3 rounded-xl border-2 border-orange-300 bg-orange-50 hover:bg-orange-100 text-orange-950 font-black inline-flex items-center gap-1.5 shadow-2xs transition cursor-pointer"
+            title="開啟個人資料與系統管理介面"
+          >
+            <Settings className="w-3.5 h-3.5 text-orange-600 shrink-0" />
+            <span>
+              班級 {roomId} · {student.seatNumber}號 {displayStudentName} · 個資與系統管理
+            </span>
+          </button>
         </div>
       </div>
 
-      {/* Selected Block Action Bar: 已放入作息表的積木可點選直接移到其他天 + 時長調整 + 刪除 */}
+      {/* 第二列：時間軸上下與左右快速移動導覽列（解決電腦與平板上下／左右移動不便的問題） */}
+      <div className="px-3 py-1.5 bg-amber-50/70 border-b border-amber-200/80 flex flex-wrap items-center justify-between gap-2 text-xs">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="font-black text-amber-900 inline-flex items-center gap-1 mr-1">
+            <Move className="w-3.5 h-3.5 text-amber-600" />
+            快速移動時段：
+          </span>
+
+          <button
+            type="button"
+            onClick={() => scrollHorizontalByHours(-3)}
+            className="h-7 px-2.5 rounded-lg bg-white hover:bg-amber-100 border border-amber-300 text-slate-800 font-black inline-flex items-center gap-0.5 shadow-2xs transition cursor-pointer"
+            title="向左捲動 3 小時"
+          >
+            <ChevronLeft className="w-3.5 h-3.5 text-amber-700" />
+            <span>左移 3時</span>
+          </button>
+
+          {QUICK_JUMP_HOURS.map((item) => (
+            <button
+              key={item.hour}
+              type="button"
+              onClick={() => scrollToHour(item.hour, 'smooth')}
+              className="h-7 px-2.5 rounded-lg bg-white hover:bg-amber-500 hover:text-white border border-amber-200 text-slate-700 font-black transition cursor-pointer"
+              title={`快速跳轉至 ${item.label}`}
+            >
+              {item.label}
+            </button>
+          ))}
+
+          <button
+            type="button"
+            onClick={() => scrollHorizontalByHours(3)}
+            className="h-7 px-2.5 rounded-lg bg-white hover:bg-amber-100 border border-amber-300 text-slate-800 font-black inline-flex items-center gap-0.5 shadow-2xs transition cursor-pointer"
+            title="向右捲動 3 小時"
+          >
+            <span>右移 3時</span>
+            <ChevronRight className="w-3.5 h-3.5 text-amber-700" />
+          </button>
+        </div>
+
+        {/* 上下移動按鈕與滑動提示 */}
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => scrollVerticalByRows('up')}
+            className="h-7 px-2.5 rounded-lg bg-white hover:bg-amber-100 border border-amber-300 text-slate-800 font-black inline-flex items-center gap-0.5 shadow-2xs transition cursor-pointer"
+            title="向上移動（查看週一～週三）"
+          >
+            <ChevronUp className="w-3.5 h-3.5 text-amber-700" />
+            <span>上移</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => scrollVerticalByRows('down')}
+            className="h-7 px-2.5 rounded-lg bg-white hover:bg-amber-100 border border-amber-300 text-slate-800 font-black inline-flex items-center gap-0.5 shadow-2xs transition cursor-pointer"
+            title="向下移動（查看週五～週日）"
+          >
+            <ChevronDown className="w-3.5 h-3.5 text-amber-700" />
+            <span>下移</span>
+          </button>
+          <span className="hidden xl:inline text-[11px] font-bold text-slate-500 ml-1">
+            （提示：滾輪可直接左右捲動時間軸，按住空白處亦可直接拖動畫面）
+          </span>
+        </div>
+      </div>
+
+      {/* Selected Block Action Bar: 已放入作息表的積木可點選直接移到其他天 + 時間前後微調 + 時長調整 + 刪除 */}
       {selectedBlock && (
         <div className="px-3 py-2 bg-blue-50/95 border-b-2 border-blue-200 flex flex-wrap items-center justify-between gap-2 text-xs">
           <div className="flex items-center gap-2 font-black text-slate-800 flex-wrap">
@@ -678,8 +875,33 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
             })}
           </div>
 
-          {/* 調整時長與刪除按鈕 */}
-          <div className="flex items-center gap-1.5">
+          {/* 提早/延後時間 + 調整時長 + 刪除按鈕 */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <button
+              type="button"
+              onClick={() => {
+                const nextStart = Math.max(0, selectedBlock.startMinute - snapMinutes);
+                updateBlock(selectedBlock.id, { startMinute: nextStart }, true);
+              }}
+              className="px-2 py-1 bg-white border border-slate-300 rounded-lg font-black hover:bg-slate-100 cursor-pointer"
+              title={`將開始時間提早 ${snapMinutes} 分鐘`}
+            >
+              ◀ 提早{snapMinutes}分
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const nextStart = Math.min(
+                  1440 - selectedBlock.durationMinutes,
+                  selectedBlock.startMinute + snapMinutes
+                );
+                updateBlock(selectedBlock.id, { startMinute: nextStart }, true);
+              }}
+              className="px-2 py-1 bg-white border border-slate-300 rounded-lg font-black hover:bg-slate-100 cursor-pointer"
+              title={`將開始時間延後 ${snapMinutes} 分鐘`}
+            >
+              延後{snapMinutes}分 ▶
+            </button>
             <button
               type="button"
               onClick={() => {
@@ -691,7 +913,7 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
               }}
               className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg font-black hover:bg-slate-100 cursor-pointer"
             >
-              -{snapMinutes}分
+              時長-{snapMinutes}分
             </button>
             <button
               type="button"
@@ -704,7 +926,7 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
               }}
               className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg font-black hover:bg-slate-100 cursor-pointer"
             >
-              +{snapMinutes}分
+              時長+{snapMinutes}分
             </button>
             <button
               type="button"
@@ -717,7 +939,7 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
             <button
               type="button"
               onClick={() => setSelectedBlockId(null)}
-              className="px-2 py-1 text-slate-500 hover:text-slate-800 font-bold"
+              className="px-2 py-1 text-slate-500 hover:text-slate-800 font-bold cursor-pointer"
               title="取消選取此積木"
             >
               ✕
@@ -732,6 +954,19 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
         onMouseLeave={() => {
           setHoverPreview(null);
           setCursorPos(null);
+        }}
+        onWheel={(e) => {
+          const container = scrollContainerRef.current;
+          if (!container) return;
+          // 若游標在左側星期欄上，保持原生上下捲動
+          if ((e.target as HTMLElement).closest('[data-day-left-header="true"]')) {
+            return;
+          }
+          // 若在 24H 時間軸軌道區轉動垂直滾輪，且目前並非按住 Ctrl 縮放，直接轉換為平滑左右捲動時間軸！
+          if (Math.abs(e.deltaY) > Math.abs(e.deltaX) && !e.ctrlKey) {
+            e.preventDefault();
+            container.scrollLeft += e.deltaY * 1.15;
+          }
         }}
         onPointerMove={(e) => {
           if (activeTemplate && e.pointerType === 'mouse' && !dragState) {
@@ -752,6 +987,7 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
           <div className="sticky top-0 z-30 flex bg-slate-50/95 backdrop-blur-xs border-b-2 border-amber-200 h-11">
             {/* Top-Left Frozen Corner */}
             <div
+              data-day-left-header="true"
               style={{ width: `${DAY_COL_WIDTH_PX}px` }}
               className="sticky left-0 z-40 shrink-0 bg-amber-100 border-r-2 border-amber-200 flex flex-col items-center justify-center text-xs font-black text-amber-900 shadow-2xs"
             >
@@ -823,8 +1059,9 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
                 data-day-row-index={day.index}
                 className="flex border-b border-slate-200/90 h-[84px] relative"
               >
-                {/* Sticky Left Day Column with Date (若已選取課表積木，點擊左側星期欄亦可直接把積木移到該天) */}
+                {/* Sticky Left Day Column with Date */}
                 <div
+                  data-day-left-header="true"
                   style={{ width: `${DAY_COL_WIDTH_PX}px` }}
                   onClick={() => {
                     if (selectedBlock && selectedBlock.dayIndex !== day.index) {
@@ -866,6 +1103,24 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
                   data-day-row-index={day.index}
                   onPointerDown={(e) => {
                     trackPointerDownRef.current = { x: e.clientX, y: e.clientY };
+                    // 在「瀏覽與調整模式」且點在空白軌道時，允許滑鼠直接按住拖曳平移畫布 (Grab-to-Pan)
+                    if (
+                      !activeTemplate &&
+                      e.pointerType === 'mouse' &&
+                      e.button === 0 &&
+                      !(e.target as HTMLElement).closest('[data-puzzle-block="true"]') &&
+                      scrollContainerRef.current
+                    ) {
+                      panStateRef.current = {
+                        startX: e.clientX,
+                        startY: e.clientY,
+                        initialScrollLeft: scrollContainerRef.current.scrollLeft,
+                        initialScrollTop: scrollContainerRef.current.scrollTop,
+                        initialWindowScrollY: window.scrollY,
+                        isPanning: false,
+                      };
+                      setIsGrabPanning(true);
+                    }
                   }}
                   onClick={(e) => handleEmptySlotClick(e, day.index)}
                   onMouseMove={(e) => {
@@ -895,7 +1150,11 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
                   }}
                   onDrop={(e) => handleDropOnDayRow(e, day.index)}
                   className={`relative flex-1 h-full overflow-hidden ${
-                    activeTemplate ? 'cursor-copy' : 'cursor-default'
+                    activeTemplate
+                      ? 'cursor-copy'
+                      : isGrabPanning
+                        ? 'cursor-grabbing'
+                        : 'cursor-grab'
                   }`}
                   style={{ width: `${TOTAL_WIDTH_PX}px` }}
                 >
@@ -1044,6 +1303,11 @@ const PuzzleBlockItem: React.FC<PuzzleBlockItemProps> = ({
         onSelect();
       }}
       onPointerDown={(e) => {
+        // 在平板觸控 (touch) 模式下，點按積木本體中間保留給瀏覽器原生上下／左右捲動畫面，避免手指滑過睡眠或上課積木時卡住無法捲動！
+        if (e.pointerType === 'touch') {
+          onSelect();
+          return;
+        }
         if (e.button !== 0 && e.pointerType === 'mouse') return;
         if ((e.target as HTMLElement).dataset.resizeHandle) return;
         e.stopPropagation();
@@ -1056,7 +1320,7 @@ const PuzzleBlockItem: React.FC<PuzzleBlockItemProps> = ({
         left: `${leftPx}px`,
         width: `${widthPx}px`,
         backgroundColor: block.color,
-        touchAction: 'none',
+        touchAction: 'pan-x pan-y',
       }}
       className={`timeline-puzzle-block text-white flex items-center justify-between select-none cursor-grab active:cursor-grabbing ${
         isConnectedLeft ? 'is-connected-left' : ''

@@ -142,30 +142,30 @@
   }
 }
 
-/* Touch-first scrolling for iOS Safari / iPad / Android Tablets */
+/* Touch-first scrolling for iOS Safari / iPad / Android Tablets & Desktop */
 .planner-scroll-container {
   touch-action: pan-x pan-y;
   -webkit-overflow-scrolling: touch;
-  overscroll-behavior: contain;
+  overscroll-behavior: auto;
 }
 
-/* Custom sleek scrollbars */
+/* 加寬、醒目好拉動的雙向捲軸 (14px) */
 .planner-scroll-container::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 14px;
+  height: 14px;
 }
 
 .planner-scroll-container::-webkit-scrollbar-track {
-  background: #f8fafc;
-  border-radius: 6px;
+  background: #fef3c7;
+  border-radius: 8px;
 }
 
 .planner-scroll-container::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
-  border-radius: 6px;
-  border: 2px solid #f8fafc;
+  background: #f59e0b;
+  border-radius: 8px;
+  border: 2px solid #fef3c7;
 }
 
 .planner-scroll-container::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+  background: #d97706;
 }

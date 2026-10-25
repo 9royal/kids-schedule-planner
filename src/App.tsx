@@ -11,19 +11,15 @@ import { ActivityPaletteDrawer } from './components/ActivityPaletteDrawer';
 import { LeaderboardPanel } from './components/LeaderboardPanel';
 import { RoomSeatModal } from './components/RoomSeatModal';
 import { CalendarImportModal } from './components/CalendarImportModal';
-import { formatLeaderboardDisplayName } from './data/categories';
 import { ParentCategoryId } from './types/schedule';
 import {
   Calendar,
   Clock,
   Focus,
-  RotateCcw,
   ChevronLeft,
   ChevronRight,
   CalendarDays,
-  Settings,
   Grid,
-  Undo2,
   XCircle,
 } from 'lucide-react';
 
@@ -35,8 +31,6 @@ const TOP_PILL_BASE =
 
 export function PlannerApp() {
   const {
-    roomId,
-    student,
     hasCompletedOnboarding,
     setOnboardingCompleted,
     snapMinutes,
@@ -44,9 +38,6 @@ export function PlannerApp() {
     focusStartHour,
     focusEndHour,
     setFocusHours,
-    resetToStarterSchedule,
-    undoStack,
-    undoSchedule,
     selectedWeekOffset,
     setSelectedWeekOffset,
     jumpToFutureDate,
@@ -84,12 +75,6 @@ export function PlannerApp() {
   const [focusScrollTrigger, setFocusScrollTrigger] = useState(0);
   const [pastWeekHint, setPastWeekHint] = useState(false);
 
-  const displayStudentName = formatLeaderboardDisplayName(
-    student.name,
-    student.nickname,
-    student.displayPreference || 'nickname'
-  );
-
   // 計算當前選擇週次的起訖日期（週一 ～ 週日）與最小可選日期（本週一）
   const currentMonday = getCurrentWeekMonday();
   const minAllowedDateStr = formatDateKeyYYYYMMDD(currentMonday);
@@ -126,14 +111,14 @@ export function PlannerApp() {
 
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-amber-50/70 via-orange-50/40 to-sky-50/60 text-slate-800">
-      {/* 僅在「規劃作息表」頁面顯示頂部導覽與工具列（時間與排行頁面的連結已整合至時鐘與現在活動列內，並取消匯入行事曆連結） */}
+      {/* 僅在「規劃作息表」頁面顯示頂部導覽與工具列（個資管理、回復上一步、範本課表皆已移至下方作息表工作列） */}
       {activeTab === 'planner' && (
         <header className="px-3 py-2 bg-white/95 backdrop-blur-md border-b-2 border-amber-200/80 sticky top-0 z-40">
           <nav
             aria-label="主功能導覽與工具橫排"
             className="max-w-[1920px] mx-auto flex items-center justify-between gap-2 flex-wrap xl:flex-nowrap overflow-x-auto no-scrollbar"
           >
-            {/* 左側：返回時間與排行榜 + 班級個資與管理介面 + 匯入行事曆 */}
+            {/* 左側：返回時間與排行榜 + 匯入行事曆 */}
             <div className="flex items-center gap-2 shrink-0 flex-wrap sm:flex-nowrap">
               <button
                 type="button"
@@ -146,18 +131,6 @@ export function PlannerApp() {
 
               <button
                 type="button"
-                onClick={handleOpenManagementModal}
-                className={`${TOP_PILL_BASE} bg-orange-50 hover:bg-orange-100 border-orange-300 text-orange-950 cursor-pointer`}
-                title="開啟個人資料與系統管理介面"
-              >
-                <Settings className="w-3.5 h-3.5 text-orange-600 shrink-0" />
-                <span>
-                  班級 {roomId} · {student.seatNumber}號 {displayStudentName} · 個資與管理
-                </span>
-              </button>
-
-              <button
-                type="button"
                 onClick={() => setIsCalendarModalOpen(true)}
                 className={`${TOP_PILL_BASE} bg-blue-600 hover:bg-blue-700 border-blue-700 text-white cursor-pointer`}
               >
@@ -166,7 +139,7 @@ export function PlannerApp() {
               </button>
             </div>
 
-            {/* 右側：日期/週次、聚焦時段、格點、回復上一步、範本課表 */}
+            {/* 右側：日期/週次、聚焦時段、格點、快速放棄積木點選 */}
             <div className="flex items-center gap-2 shrink-0 flex-wrap sm:flex-nowrap">
               {/* 1. 週次與未來日期選擇器 */}
               <div
@@ -311,23 +284,7 @@ export function PlannerApp() {
                 </button>
               </div>
 
-              {/* 4. 回復上一步（Undo） */}
-              <button
-                type="button"
-                disabled={undoStack.length === 0}
-                onClick={undoSchedule}
-                className={`${TOP_PILL_BASE} ${
-                  undoStack.length > 0
-                    ? 'bg-amber-50 hover:bg-amber-100 border-amber-400 text-amber-950 cursor-pointer'
-                    : 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
-                }`}
-                title="回復上一步 (快捷鍵 Ctrl+Z)"
-              >
-                <Undo2 className="w-3.5 h-3.5 shrink-0" />
-                <span>回復上一步{undoStack.length > 0 ? ` (${undoStack.length})` : ''}</span>
-              </button>
-
-              {/* 5. 快速放棄積木點選 */}
+              {/* 4. 快速放棄積木點選 */}
               {activePaletteTemplateId && (
                 <button
                   type="button"
@@ -339,17 +296,6 @@ export function PlannerApp() {
                   <span>放棄積木點選</span>
                 </button>
               )}
-
-              {/* 6. 範本課表重置 */}
-              <button
-                type="button"
-                onClick={resetToStarterSchedule}
-                className={`${TOP_PILL_BASE} bg-slate-100 hover:bg-rose-50 border-slate-300 hover:border-rose-300 text-slate-700 hover:text-rose-700`}
-                title="還原為預設範本課表（含 22:00-07:00 晚間睡眠）"
-              >
-                <RotateCcw className="w-3.5 h-3.5 shrink-0" />
-                <span>範本課表</span>
-              </button>
             </div>
           </nav>
         </header>
@@ -379,6 +325,7 @@ export function PlannerApp() {
             <WeeklyPuzzlePlanner
               activePaletteTemplateId={activePaletteTemplateId}
               onClearPaletteSelection={() => setActivePaletteTemplateId(null)}
+              onOpenManagementModal={handleOpenManagementModal}
               focusScrollTrigger={focusScrollTrigger}
             />
             <ActivityPaletteDrawer
