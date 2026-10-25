@@ -57,8 +57,11 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
     templates,
     removeTemplate,
     restoreDefaultTemplates,
+    maxSeatCount,
+    setMaxSeatCount,
     leaderboardMap,
     removeLeaderboardStudent,
+    clearOtherLeaderboardStudents,
     simulate40Students,
     syncMode,
     firebaseConnected,
@@ -466,20 +469,20 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
               </div>
             </div>
 
-            {/* 1 ~ 40 Seat Grid */}
+            {/* 1 ~ maxSeatCount Seat Grid */}
             <div>
               <div className="flex items-center justify-between mb-2">
                 <label className="text-xs font-black text-slate-700">
-                  點選你的座號 (1 ~ 40 號)：目前選中{' '}
+                  點選你的座號 (1 ~ {maxSeatCount} 號)：目前選中{' '}
                   <span className="text-amber-600 text-sm">{selectedSeat} 號</span>
                 </label>
                 <span className="text-[11px] font-bold text-slate-500">
-                  儲存後系統將自動記住此座號與個資
+                  儲存後系統將自動記住此座號與個資（可於「3. 班級名單管理」調整全班人數上限）
                 </span>
               </div>
 
-              <div className="grid grid-cols-8 sm:grid-cols-10 gap-1.5 bg-slate-50 p-3 rounded-2xl border border-slate-200">
-                {Array.from({ length: 40 }).map((_, idx) => {
+              <div className="grid grid-cols-8 sm:grid-cols-10 gap-1.5 bg-slate-50 p-3 rounded-2xl border border-slate-200 max-h-[168px] overflow-y-auto">
+                {Array.from({ length: maxSeatCount }).map((_, idx) => {
                   const seat = idx + 1;
                   const isSelected = selectedSeat === seat;
                   return (
@@ -635,6 +638,38 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
         {/* Tab 3: Classroom & Data Management */}
         {activeTab === 'classroom' && (
           <div className="p-5 overflow-y-auto space-y-4 text-xs">
+            {/* Classroom Headcount / Seat Limit & System Capacity Overview */}
+            <div className="p-3.5 rounded-2xl bg-amber-50/80 border border-amber-200 space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="font-black text-amber-950 text-sm">
+                    🏫 班級座號上限與人數管控設定
+                  </div>
+                  <div className="text-amber-800 font-bold text-[11px]">
+                    班級數量無上限（輸入不同班級代號即自動獨立分流）；單班座號上限可依實際班級人數調整
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="font-black text-slate-700">單班座號上限：</span>
+                  {[20, 25, 30, 35, 40, 50, 60].map((cnt) => (
+                    <button
+                      key={cnt}
+                      type="button"
+                      onClick={() => setMaxSeatCount(cnt)}
+                      className={`px-2.5 py-1 rounded-lg font-black transition ${
+                        maxSeatCount === cnt
+                          ? 'bg-amber-500 text-white shadow-2xs'
+                          : 'bg-white text-slate-700 border border-amber-200 hover:bg-amber-100'
+                      }`}
+                    >
+                      {cnt}人
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
             {/* Actions Bar */}
             <div className="flex flex-wrap items-center justify-between gap-2 p-3.5 rounded-2xl bg-indigo-50/80 border border-indigo-200">
               <div>
@@ -642,7 +677,7 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
                   班級 {roomId} 排行榜與壓力測試管理
                 </div>
                 <div className="text-indigo-700 font-bold">
-                  目前班級共有 {Object.keys(leaderboardMap).length} 位同學同步中
+                  目前班級共有 {Object.keys(leaderboardMap).length} 位同學同步中（座號上限 {maxSeatCount} 號）
                 </div>
               </div>
 
@@ -655,18 +690,32 @@ export const RoomSeatModal: React.FC<RoomSeatModalProps> = ({
                     await simulate40Students();
                     setIsSimulating(false);
                   }}
-                  className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black inline-flex items-center gap-1.5 shadow-2xs transition"
+                  className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black inline-flex items-center gap-1.5 shadow-2xs transition cursor-pointer"
                 >
                   <Users className="w-4 h-4" />
                   <span>
-                    {isSimulating ? '正在同步 40 人...' : '一鍵模擬全班 40 人排課'}
+                    {isSimulating
+                      ? `正在同步 ${maxSeatCount} 人...`
+                      : `一鍵模擬全班 ${maxSeatCount} 人排課`}
                   </span>
                 </button>
+
+                {Object.keys(leaderboardMap).length > 1 && (
+                  <button
+                    type="button"
+                    onClick={clearOtherLeaderboardStudents}
+                    className="px-3.5 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-black inline-flex items-center gap-1.5 transition cursor-pointer"
+                    title="移除所有模擬或其他座號，僅保留目前登入的座號"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>清空其他測試座號（僅留本人）</span>
+                  </button>
+                )}
 
                 <button
                   type="button"
                   onClick={handleExportScheduleJson}
-                  className="px-3.5 py-2 rounded-xl bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 font-black inline-flex items-center gap-1.5 transition"
+                  className="px-3.5 py-2 rounded-xl bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 font-black inline-flex items-center gap-1.5 transition cursor-pointer"
                 >
                   <Download className="w-4 h-4" />
                   <span>匯出課表備份 JSON</span>

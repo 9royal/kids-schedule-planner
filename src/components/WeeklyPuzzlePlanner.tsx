@@ -745,7 +745,7 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
             </span>
           )}
 
-          {/* 5. 個資與系統管理介面連結（移至瀏覽與調整模式右方） */}
+          {/* 5. 個資與系統管理介面連結（移至瀏覽與調整模式右方，僅顯示班級與個人資料） */}
           <button
             type="button"
             onClick={onOpenManagementModal}
@@ -754,7 +754,7 @@ export const WeeklyPuzzlePlanner: React.FC<WeeklyPuzzlePlannerProps> = ({
           >
             <Settings className="w-3.5 h-3.5 text-orange-600 shrink-0" />
             <span>
-              班級 {roomId} · {student.seatNumber}號 {displayStudentName} · 個資與系統管理
+              班級 {roomId} · {student.seatNumber}號 {displayStudentName}
             </span>
           </button>
         </div>

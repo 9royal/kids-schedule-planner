@@ -9,7 +9,7 @@ import {
   PARENT_CATEGORIES,
   formatLeaderboardDisplayName,
 } from '../data/categories';
-import { LeaderboardEntry, ParentCategoryId } from '../types/schedule';
+import { LeaderboardEntry, ParentCategoryId, ScheduleBlock } from '../types/schedule';
 import { compressAvatarImage } from '../utils/avatarCompressor';
 import { RubyText } from '../utils/zhuyin';
 import { CuteActivityIcon } from './CuteActivityIcon';
@@ -18,9 +18,8 @@ import {
   Clock,
   Puzzle,
   Camera,
-  Edit3,
-  Check,
   Settings,
+  FastForward,
 } from 'lucide-react';
 
 function formatTime24(hours: number, minutes: number, seconds?: number): string {
@@ -64,8 +63,6 @@ export const DualClockDashboard: React.FC<DualClockDashboardProps> = ({
   } = usePlannerStore();
 
   const [now, setNow] = useState<Date>(() => new Date());
-  const [isEditingNickname, setIsEditingNickname] = useState(false);
-  const [nicknameDraft, setNicknameDraft] = useState(student.nickname || '');
   const [avatarNotice, setAvatarNotice] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -93,21 +90,51 @@ export const DualClockDashboard: React.FC<DualClockDashboardProps> = ({
 
   // Find the active block right now in the current week
   const currentWeekSchedule = schedulesByWeek[getWeekKeyByOffset(0)] || schedule;
-  const activeBlock = currentWeekSchedule.find(
+  const todayBlocks = currentWeekSchedule
+    .filter((b) => b.dayIndex === currentDayIndex)
+    .sort((a, b) => a.startMinute - b.startMinute);
+
+  const activeBlock = todayBlocks.find(
     (b) =>
-      b.dayIndex === currentDayIndex &&
       currentMinuteOfDay >= b.startMinute &&
       currentMinuteOfDay < b.startMinute + b.durationMinutes
   );
 
+  // 尋找「下個活動」（同日後續時段的第一個積木；若今日已無後續活動，則找明日第一個活動）
+  let nextBlock: ScheduleBlock | undefined = todayBlocks.find(
+    (b) =>
+      b.id !== activeBlock?.id &&
+      b.startMinute >= (activeBlock ? activeBlock.startMinute + activeBlock.durationMinutes : currentMinuteOfDay)
+  );
+  let isNextBlockTomorrow = false;
+
+  if (!nextBlock) {
+    const tomorrowDayIndex = (currentDayIndex + 1) % 7;
+    const tomorrowBlocks = currentWeekSchedule
+      .filter((b) => b.dayIndex === tomorrowDayIndex)
+      .sort((a, b) => a.startMinute - b.startMinute);
+    if (tomorrowBlocks.length > 0) {
+      nextBlock = tomorrowBlocks[0];
+      isNextBlockTomorrow = true;
+    }
+  }
+
   const parentCat = activeBlock ? getParentCategory(activeBlock.parentId) : null;
+  const nextParentCat = nextBlock ? getParentCategory(nextBlock.parentId) : null;
   const dayInfo = DAYS_OF_WEEK[currentDayIndex];
   const dateStr = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(
     2,
     '0'
   )}/${String(now.getDate()).padStart(2, '0')}`;
 
-  // 計算個人在當前排行榜類別的名次與時數（對應右側附圖卡片）
+  // 計算距離下個活動開始還有多久
+  const minutesUntilNext = nextBlock
+    ? isNextBlockTomorrow
+      ? 1440 - currentMinuteOfDay + nextBlock.startMinute
+      : Math.max(0, nextBlock.startMinute - currentMinuteOfDay)
+    : null;
+
+  // 計算個人在當前排行榜類別的名次與時數（對應右側個人資料卡）
   const activeCategoryObj =
     PARENT_CATEGORIES.find((c) => c.id === selectedCategory) || PARENT_CATEGORIES[6];
   const myDisplayPref = student.displayPreference || 'nickname';
@@ -155,159 +182,171 @@ export const DualClockDashboard: React.FC<DualClockDashboardProps> = ({
       const { dataUrl, byteSize } = await compressAvatarImage(file);
       updateStudentProfile({ avatarUrl: dataUrl });
       const kb = (byteSize / 1024).toFixed(1);
-      setAvatarNotice(`已自動圓形裁切 128×128 並壓縮至 ${kb} KB (<15KB)`);
-      setTimeout(() => setAvatarNotice(null), 4500);
+      setAvatarNotice(`已壓縮至 ${kb} KB`);
+      setTimeout(() => setAvatarNotice(null), 4000);
     } catch (err: any) {
       setAvatarNotice(err?.message || '頭像處理失敗');
     }
   };
 
-  const handleSaveNickname = () => {
-    updateStudentProfile({
-      nickname: nicknameDraft.trim(),
-      displayPreference: 'nickname',
-    });
-    setIsEditingNickname(false);
-  };
-
   return (
-    <section className="bg-white/95 backdrop-blur-md border-2 border-amber-200/80 rounded-3xl shadow-sm p-4 grid grid-cols-1 xl:grid-cols-12 gap-4 items-stretch">
-      {/* 1. 左側：雙時鐘（指針時鐘 + 24小時制標準時鐘，只顯示現在時間） */}
-      <div className="xl:col-span-4 flex items-center gap-4 bg-amber-50/45 border border-amber-200/70 rounded-2xl px-4 py-3">
-        {/* Vector Analog Clock */}
-        <div className="relative w-20 h-20 sm:w-24 sm:h-24 shrink-0">
-          <svg viewBox="0 0 120 120" className="w-full h-full drop-shadow-sm">
-            <circle
-              cx="60"
-              cy="60"
-              r="56"
-              fill="#FFFBEB"
-              stroke="#F59E0B"
-              strokeWidth="5"
-            />
-            {Array.from({ length: 12 }).map((_, i) => {
-              const num = i === 0 ? 12 : i;
-              const angleRad = ((i * 30 - 90) * Math.PI) / 180;
-              const x1 = 60 + Math.cos(angleRad) * 46;
-              const y1 = 60 + Math.sin(angleRad) * 46;
-              const x2 = 60 + Math.cos(angleRad) * 51;
-              const y2 = 60 + Math.sin(angleRad) * 51;
-              const tx = 60 + Math.cos(angleRad) * 37;
-              const ty = 60 + Math.sin(angleRad) * 37;
-              return (
-                <g key={i}>
-                  <line
-                    x1={x1}
-                    y1={y1}
-                    x2={x2}
-                    y2={y2}
-                    stroke="#64748B"
-                    strokeWidth={i % 3 === 0 ? '2.5' : '1.5'}
-                    strokeLinecap="round"
-                  />
-                  <text
-                    x={tx}
-                    y={ty + 3.5}
-                    textAnchor="middle"
-                    fontSize="9.5"
-                    fontWeight="800"
-                    fill="#334155"
-                  >
-                    {num}
-                  </text>
-                </g>
-              );
-            })}
+    <section className="bg-white/95 backdrop-blur-md border-2 border-amber-200/80 rounded-3xl shadow-sm p-3.5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-12 gap-3 items-stretch">
+      {/* 1. 第一格（xl:col-span-4）：時鐘方框 ＋ 規劃作息表連結（移入時鐘方框內右側） */}
+      <div className="xl:col-span-4 flex items-center justify-between gap-2.5 bg-amber-50/45 border border-amber-200/70 rounded-2xl px-3.5 py-2.5">
+        <div className="flex items-center gap-3 min-w-0">
+          {/* Vector Analog Clock */}
+          <div className="relative w-16 h-16 sm:w-20 sm:h-20 shrink-0">
+            <svg viewBox="0 0 120 120" className="w-full h-full drop-shadow-sm">
+              <circle
+                cx="60"
+                cy="60"
+                r="56"
+                fill="#FFFBEB"
+                stroke="#F59E0B"
+                strokeWidth="5"
+              />
+              {Array.from({ length: 12 }).map((_, i) => {
+                const num = i === 0 ? 12 : i;
+                const angleRad = ((i * 30 - 90) * Math.PI) / 180;
+                const x1 = 60 + Math.cos(angleRad) * 46;
+                const y1 = 60 + Math.sin(angleRad) * 46;
+                const x2 = 60 + Math.cos(angleRad) * 51;
+                const y2 = 60 + Math.sin(angleRad) * 51;
+                const tx = 60 + Math.cos(angleRad) * 37;
+                const ty = 60 + Math.sin(angleRad) * 37;
+                return (
+                  <g key={i}>
+                    <line
+                      x1={x1}
+                      y1={y1}
+                      x2={x2}
+                      y2={y2}
+                      stroke="#64748B"
+                      strokeWidth={i % 3 === 0 ? '2.5' : '1.5'}
+                      strokeLinecap="round"
+                    />
+                    <text
+                      x={tx}
+                      y={ty + 3.5}
+                      textAnchor="middle"
+                      fontSize="9.5"
+                      fontWeight="800"
+                      fill="#334155"
+                    >
+                      {num}
+                    </text>
+                  </g>
+                );
+              })}
 
-            {/* Hour Hand */}
-            <g transform={`rotate(${hourAngle} 60 60)`}>
-              <line
-                x1="60"
-                y1="62"
-                x2="60"
-                y2="34"
+              {/* Hour Hand */}
+              <g transform={`rotate(${hourAngle} 60 60)`}>
+                <line
+                  x1="60"
+                  y1="62"
+                  x2="60"
+                  y2="34"
+                  stroke="#1E293B"
+                  strokeWidth="4.5"
+                  strokeLinecap="round"
+                />
+              </g>
+
+              {/* Minute Hand */}
+              <g transform={`rotate(${minuteAngle} 60 60)`}>
+                <line
+                  x1="60"
+                  y1="64"
+                  x2="60"
+                  y2="22"
+                  stroke="#2563EB"
+                  strokeWidth="3.2"
+                  strokeLinecap="round"
+                />
+              </g>
+
+              {/* Second Hand */}
+              <g transform={`rotate(${secondAngle} 60 60)`}>
+                <line
+                  x1="60"
+                  y1="68"
+                  x2="60"
+                  y2="18"
+                  stroke="#EF4444"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                />
+              </g>
+
+              {/* Center Cap */}
+              <circle
+                cx="60"
+                cy="60"
+                r="4.5"
+                fill="#F59E0B"
                 stroke="#1E293B"
-                strokeWidth="4.5"
-                strokeLinecap="round"
+                strokeWidth="2"
               />
-            </g>
-
-            {/* Minute Hand */}
-            <g transform={`rotate(${minuteAngle} 60 60)`}>
-              <line
-                x1="60"
-                y1="64"
-                x2="60"
-                y2="22"
-                stroke="#2563EB"
-                strokeWidth="3.2"
-                strokeLinecap="round"
-              />
-            </g>
-
-            {/* Second Hand */}
-            <g transform={`rotate(${secondAngle} 60 60)`}>
-              <line
-                x1="60"
-                y1="68"
-                x2="60"
-                y2="18"
-                stroke="#EF4444"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-              />
-            </g>
-
-            {/* Center Cap */}
-            <circle cx="60" cy="60" r="4.5" fill="#F59E0B" stroke="#1E293B" strokeWidth="2" />
-          </svg>
-        </div>
-
-        {/* 24-Hour Digital Clock (現在時間) */}
-        <div className="flex flex-col min-w-0">
-          <div className="flex items-center gap-1.5 text-xs font-bold text-amber-700">
-            <Clock className="w-3.5 h-3.5 shrink-0" />
-            <span className="truncate">
-              現在時間 · {dateStr} {dayInfo.full}
-            </span>
+            </svg>
           </div>
 
-          <div className="font-rounded text-3xl sm:text-4xl font-black tracking-tight text-slate-800 tabular-nums leading-none mt-1">
-            {formatTime24(displayHours, displayMinutes, displaySeconds)}
-          </div>
+          {/* 24-Hour Digital Clock (現在時間) */}
+          <div className="flex flex-col min-w-0">
+            <div className="flex items-center gap-1 text-[11px] font-bold text-amber-700">
+              <Clock className="w-3 h-3 shrink-0" />
+              <span className="truncate">
+                現在時間 · {dateStr} {dayInfo.full}
+              </span>
+            </div>
 
-          <div className="text-xs font-medium text-slate-500 mt-1">
-            24小時制標準時鐘 · {displayHours < 12 ? '上午 AM' : '下午 PM'}
+            <div className="font-rounded text-2xl sm:text-3xl font-black tracking-tight text-slate-800 tabular-nums leading-none mt-1">
+              {formatTime24(displayHours, displayMinutes, displaySeconds)}
+            </div>
+
+            <div className="text-[11px] font-medium text-slate-500 mt-1 truncate">
+              24小時制標準時鐘 · {displayHours < 12 ? '上午 AM' : '下午 PM'}
+            </div>
           </div>
         </div>
+
+        {/* 規劃作息表連結（移入時鐘方框內右側） */}
+        <button
+          type="button"
+          onClick={onGoToPlannerTab}
+          className="px-3 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 border-2 border-amber-600 text-white font-black text-xs inline-flex items-center gap-1.5 shadow-sm shrink-0 transition cursor-pointer"
+          title="前往規劃作息表"
+        >
+          <Puzzle className="w-4 h-4 shrink-0" />
+          <span>規劃作息表</span>
+        </button>
       </div>
 
-      {/* 2. 中間：現在進行中活動方框（內含「規劃作息表」連結按鈕） */}
+      {/* 2. 第二格（xl:col-span-3）：現在進行中活動方框 */}
       <div
-        className="xl:col-span-4 rounded-2xl border-2 px-4 py-3 flex items-center justify-between gap-3 transition-colors"
+        className="xl:col-span-3 rounded-2xl border-2 px-3.5 py-2.5 flex items-center gap-3 transition-colors"
         style={{
           backgroundColor: parentCat ? parentCat.bgLight : '#F8FAFC',
           borderColor: parentCat ? parentCat.borderColor : '#E2E8F0',
         }}
       >
         {activeBlock && parentCat ? (
-          <div className="flex items-center gap-3 min-w-0 flex-1">
+          <div className="flex items-center gap-3 min-w-0 w-full">
             <div
-              className="w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border-2 bg-white shrink-0"
+              className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl flex items-center justify-center shadow-sm border-2 bg-white shrink-0"
               style={{ borderColor: activeBlock.color }}
             >
-              <CuteActivityIcon iconName={activeBlock.iconName} size={38} />
+              <CuteActivityIcon iconName={activeBlock.iconName} size={34} />
             </div>
 
             <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1.5 flex-wrap mb-1">
+              <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
                 <span
                   className="text-[11px] font-bold px-2 py-0.5 rounded-full text-white shadow-xs"
                   style={{ backgroundColor: activeBlock.color }}
                 >
                   現在進行中 · {parentCat.name}
                 </span>
-                <span className="text-xs font-bold text-slate-600 tabular-nums">
+                <span className="text-[11px] font-bold text-slate-600 tabular-nums">
                   {formatTime24(
                     Math.floor(activeBlock.startMinute / 60),
                     activeBlock.startMinute % 60
@@ -320,7 +359,7 @@ export const DualClockDashboard: React.FC<DualClockDashboardProps> = ({
                 </span>
               </div>
 
-              <div className="text-xl sm:text-2xl font-black text-slate-900 tracking-wide truncate">
+              <div className="text-lg sm:text-xl font-black text-slate-900 tracking-wide truncate">
                 <RubyText
                   text={activeBlock.name}
                   zhuyin={activeBlock.zhuyin}
@@ -330,20 +369,22 @@ export const DualClockDashboard: React.FC<DualClockDashboardProps> = ({
               </div>
 
               {activeBlock.english && (
-                <div className="text-xs font-bold text-slate-600 tracking-wide truncate">
+                <div className="text-[11px] font-bold text-slate-600 tracking-wide truncate">
                   {activeBlock.english}
                 </div>
               )}
             </div>
           </div>
         ) : (
-          <div className="flex items-center gap-3 min-w-0 flex-1">
-            <div className="w-14 h-14 rounded-2xl flex items-center justify-center bg-white border-2 border-dashed border-amber-300 shrink-0">
-              <Sparkles className="w-7 h-7 text-amber-500" />
+          <div className="flex items-center gap-3 min-w-0 w-full">
+            <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl flex items-center justify-center bg-white border-2 border-dashed border-amber-300 shrink-0">
+              <Sparkles className="w-6 h-6 text-amber-500" />
             </div>
             <div className="min-w-0 flex-1">
-              <div className="text-xs font-bold text-amber-700 mb-0.5">目前時段尚未安排活動</div>
-              <div className="text-lg sm:text-xl font-black text-slate-800">
+              <div className="text-[11px] font-bold text-amber-700 mb-0.5">
+                現在進行中 · 尚未安排
+              </div>
+              <div className="text-base sm:text-lg font-black text-slate-800 truncate">
                 <RubyText
                   text="自由探索時間"
                   zhuyin="ㄗˋ ㄧㄡˊ ㄊㄢˋ ㄙㄨㄛˇ ㄕˊ ㄐㄧㄢ"
@@ -351,40 +392,95 @@ export const DualClockDashboard: React.FC<DualClockDashboardProps> = ({
                   nowrap
                 />
               </div>
-              <div className="text-xs font-bold text-slate-500">
+              <div className="text-[11px] font-bold text-slate-500 truncate">
                 Free Exploration Time
               </div>
             </div>
           </div>
         )}
-
-        {/* 規劃作息表連結（放置於現在進行中活動方框內右側） */}
-        <button
-          type="button"
-          onClick={onGoToPlannerTab}
-          className="px-3.5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 border-2 border-amber-600 text-white font-black text-xs sm:text-sm inline-flex items-center gap-1.5 shadow-sm shrink-0 transition cursor-pointer"
-          title="前往規劃作息表"
-        >
-          <Puzzle className="w-4 h-4 shrink-0" />
-          <span>規劃作息表</span>
-        </button>
       </div>
 
-      {/* 3. 右側：附圖個人資訊卡（班級座號、暱稱、目前排行榜名次、修改暱稱、更換頭像）＋ 個人資料與系統管理介面連結 */}
-      <div className="xl:col-span-4 px-4 py-3 rounded-2xl bg-gradient-to-br from-amber-50/90 via-orange-50/50 to-white border-2 border-amber-200/90 flex flex-col justify-center gap-2">
-        <div className="flex items-center gap-3.5">
+      {/* 3. 第三格（xl:col-span-2）：下個活動的提示方框（位於「現在進行中」與「個人資料」中間） */}
+      <div
+        className="xl:col-span-2 rounded-2xl border-2 px-3 py-2.5 flex items-center gap-2.5 transition-colors"
+        style={{
+          backgroundColor: nextParentCat ? `${nextParentCat.bgLight}` : '#F8FAFC',
+          borderColor: nextParentCat ? nextParentCat.borderColor : '#CBD5E1',
+        }}
+      >
+        {nextBlock && nextParentCat ? (
+          <div className="flex items-center gap-2.5 min-w-0 w-full">
+            <div
+              className="w-11 h-11 rounded-2xl flex items-center justify-center shadow-2xs border-2 bg-white shrink-0"
+              style={{ borderColor: nextBlock.color }}
+            >
+              <CuteActivityIcon iconName={nextBlock.iconName} size={28} />
+            </div>
+
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1 flex-wrap mb-0.5">
+                <span
+                  className="text-[10px] font-black px-2 py-0.5 rounded-full text-white inline-flex items-center gap-0.5"
+                  style={{ backgroundColor: nextBlock.color }}
+                >
+                  <FastForward className="w-2.5 h-2.5 shrink-0" />
+                  <span>下個活動</span>
+                </span>
+                <span className="text-[11px] font-bold text-slate-600 tabular-nums">
+                  {isNextBlockTomorrow ? '明日 ' : ''}
+                  {formatTime24(
+                    Math.floor(nextBlock.startMinute / 60),
+                    nextBlock.startMinute % 60
+                  )}
+                </span>
+              </div>
+
+              <div className="text-base sm:text-lg font-black text-slate-900 tracking-wide truncate">
+                <RubyText
+                  text={nextBlock.name}
+                  zhuyin={nextBlock.zhuyin}
+                  rtClassName="text-slate-700"
+                  nowrap
+                />
+              </div>
+
+              <div className="text-[10px] font-bold text-slate-500 truncate">
+                {minutesUntilNext !== null && minutesUntilNext > 0
+                  ? `還有 ${formatHoursAndMinutes(minutesUntilNext)} 開始`
+                  : nextBlock.english || nextParentCat.name}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2.5 min-w-0 w-full">
+            <div className="w-11 h-11 rounded-2xl flex items-center justify-center bg-white border-2 border-dashed border-slate-300 shrink-0">
+              <FastForward className="w-5 h-5 text-slate-400" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-[10px] font-bold text-slate-500 mb-0.5">下個活動預告</div>
+              <div className="text-sm font-black text-slate-700 truncate">
+                尚無後續排程
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 4. 第四格（xl:col-span-3）：個人資料方框（移除修改暱稱与更換頭像文字，個資與系統管理 icon 移至名稱後面） */}
+      <div className="xl:col-span-3 px-3.5 py-2.5 rounded-2xl bg-gradient-to-br from-amber-50/90 via-orange-50/50 to-white border-2 border-amber-200/90 flex flex-col justify-center">
+        <div className="flex items-center gap-3">
           {/* 圓形大頭貼與相機按鈕 */}
           <div className="relative group shrink-0">
             <img
               src={student.avatarUrl}
               alt={student.name}
-              className="w-16 h-16 rounded-full object-cover border-2 border-amber-400 shadow-xs bg-white"
+              className="w-14 h-14 sm:w-16 sm:h-16 rounded-full object-cover border-2 border-amber-400 shadow-xs bg-white"
             />
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center shadow border border-white transition cursor-pointer"
-              title="上傳自訂大頭貼 (自動 Canvas 128x128 壓縮)"
+              className="absolute -bottom-1 -right-1 w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center shadow border border-white transition cursor-pointer"
+              title="點擊更換大頭貼"
             >
               <Camera className="w-3.5 h-3.5" />
             </button>
@@ -397,10 +493,10 @@ export const DualClockDashboard: React.FC<DualClockDashboardProps> = ({
             />
           </div>
 
-          {/* 班級座號、暱稱、排名與操作按鈕 */}
+          {/* 班級座號、暱稱＋個資與系統管理 icon、以及目前排行榜名次 */}
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="bg-amber-500 text-white text-xs font-black px-2.5 py-0.5 rounded-full">
+              <span className="bg-amber-500 text-white text-xs font-black px-2.5 py-0.5 rounded-full shrink-0">
                 班級 {roomId} · {student.seatNumber} 號
               </span>
               <span className="font-black text-base text-slate-900 truncate">
@@ -410,77 +506,31 @@ export const DualClockDashboard: React.FC<DualClockDashboardProps> = ({
                   myDisplayPref
                 )}
               </span>
+              {/* 個資與系統管理 icon 移到名稱後面 */}
+              <button
+                type="button"
+                onClick={onOpenManagementModal}
+                className="w-7 h-7 rounded-full bg-orange-100 hover:bg-orange-200 border border-orange-300 text-orange-700 flex items-center justify-center shadow-2xs transition cursor-pointer shrink-0"
+                title="開啟個人資料與系統管理介面（修改班級、座號、暱稱、頭像與班級管理）"
+                aria-label="開啟個人資料與系統管理介面"
+              >
+                <Settings className="w-3.5 h-3.5" />
+              </button>
             </div>
 
-            <div className="text-xs font-bold text-slate-600 mt-1">
+            <div className="text-xs font-bold text-slate-600 mt-1.5 truncate">
               目前【{activeCategoryObj.name}榜】排名：
               <strong className="text-amber-700 text-sm">第 {myRank || '-'} 名</strong>（
               {formatHoursAndMinutes(myScore)}）
             </div>
 
-            {/* 修改暱稱、更換頭像、以及「個人資料與系統管理介面」連結 */}
-            <div className="mt-2 flex items-center gap-1.5 flex-wrap">
-              {isEditingNickname ? (
-                <div className="flex items-center gap-1 w-full">
-                  <input
-                    type="text"
-                    maxLength={10}
-                    value={nicknameDraft}
-                    onChange={(e) => setNicknameDraft(e.target.value)}
-                    placeholder="輸入暱稱"
-                    className="flex-1 rounded-lg border border-amber-300 bg-white px-2 py-1 text-xs font-bold text-slate-800"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleSaveNickname}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-2.5 py-1 rounded-lg inline-flex items-center gap-1 cursor-pointer"
-                  >
-                    <Check className="w-3 h-3" />
-                    儲存
-                  </button>
-                </div>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setNicknameDraft(student.nickname || '');
-                      setIsEditingNickname(true);
-                    }}
-                    className="text-[11px] font-bold bg-white hover:bg-amber-100 text-amber-900 border border-amber-300 px-2.5 py-1 rounded-lg inline-flex items-center gap-1 transition cursor-pointer"
-                  >
-                    <Edit3 className="w-3 h-3" />
-                    {student.nickname ? `修改暱稱 (${student.nickname})` : '設定排行榜暱稱'}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="text-[11px] font-bold text-blue-600 hover:underline px-1 cursor-pointer"
-                  >
-                    更換頭像
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={onOpenManagementModal}
-                    className="text-[11px] font-black bg-orange-100 hover:bg-orange-200 text-orange-950 border border-orange-300 px-2.5 py-1 rounded-lg inline-flex items-center gap-1 transition cursor-pointer"
-                    title="開啟個人資料與系統管理介面"
-                  >
-                    <Settings className="w-3 h-3 text-orange-600 shrink-0" />
-                    <span>個資與系統管理</span>
-                  </button>
-                </>
-              )}
-            </div>
+            {avatarNotice && (
+              <div className="mt-1 text-[10px] font-bold text-emerald-700">
+                ✅ {avatarNotice}
+              </div>
+            )}
           </div>
         </div>
-
-        {avatarNotice && (
-          <div className="px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-[11px] font-bold text-emerald-800">
-            ✅ {avatarNotice}
-          </div>
-        )}
       </div>
     </section>
   );

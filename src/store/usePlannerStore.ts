@@ -222,7 +222,8 @@ interface PlannerStore {
   isLeaderboardCollapsed: boolean;
   isPaletteOpen: boolean;
 
-  // Leaderboard Data
+  // Leaderboard Data & Classroom Seat Limit Control
+  maxSeatCount: number;
   leaderboardMap: Record<number, LeaderboardEntry>;
 
   // Actions
@@ -234,7 +235,9 @@ interface PlannerStore {
     displayPreference?: NameDisplayPreference
   ) => void;
   setOnboardingCompleted: (completed: boolean) => void;
+  setMaxSeatCount: (count: number) => void;
   removeLeaderboardStudent: (seatNumber: number) => void;
+  clearOtherLeaderboardStudents: () => void;
   updateStudentProfile: (updates: Partial<StudentInfo>) => void;
   setSnapMinutes: (snap: 15 | 30) => void;
   setFocusHours: (startHour: number, endHour: number) => void;
@@ -610,6 +613,7 @@ export const usePlannerStore = create<PlannerStore>((setState, getState) => {
     isLeaderboardCollapsed: false,
     isPaletteOpen: true,
 
+    maxSeatCount: Number(localStorage.getItem(`${STORAGE_PREFIX}max_seat_count`)) || 40,
     leaderboardMap: initialLeaderboard,
 
     setRoomAndStudent: (roomId, seatNumber, customName, customNickname, displayPref) => {
@@ -671,12 +675,49 @@ export const usePlannerStore = create<PlannerStore>((setState, getState) => {
       setState({ hasCompletedOnboarding: completed });
     },
 
+    setMaxSeatCount: (count) => {
+      const cleanCount = Math.max(5, Math.min(60, Math.floor(count)));
+      try {
+        localStorage.setItem(`${STORAGE_PREFIX}max_seat_count`, String(cleanCount));
+      } catch {
+        // ignore
+      }
+      setState({ maxSeatCount: cleanCount });
+    },
+
     removeLeaderboardStudent: (seatNumber) => {
       const state = getState();
       if (seatNumber === state.student.seatNumber) return;
       const nextLb = { ...state.leaderboardMap };
       delete nextLb[seatNumber];
       saveRoomLeaderboardToStorage(state.roomId, nextLb);
+      setState({ leaderboardMap: nextLb });
+      if (state.syncMode === 'firebase' && firebaseDb) {
+        const roomLbRef = ref(firebaseDb, `/rooms/${state.roomId}/leaderboard`);
+        set(roomLbRef, nextLb).catch((e) => console.warn(e));
+      }
+    },
+
+    clearOtherLeaderboardStudents: () => {
+      const state = getState();
+      const mySeat = state.student.seatNumber;
+      const myEntry = state.leaderboardMap[mySeat];
+      const nextLb: Record<number, LeaderboardEntry> = {};
+      if (myEntry) {
+        nextLb[mySeat] = myEntry;
+      }
+      saveRoomLeaderboardToStorage(state.roomId, nextLb);
+      if (broadcastChannel) {
+        broadcastChannel.postMessage({
+          type: 'BULK_LEADERBOARD_UPDATE',
+          roomId: state.roomId,
+          leaderboardMap: nextLb,
+        });
+      }
+      if (state.syncMode === 'firebase' && firebaseDb) {
+        const roomLbRef = ref(firebaseDb, `/rooms/${state.roomId}/leaderboard`);
+        set(roomLbRef, nextLb).catch((e) => console.warn(e));
+      }
       setState({ leaderboardMap: nextLb });
     },
 
@@ -1243,8 +1284,9 @@ export const usePlannerStore = create<PlannerStore>((setState, getState) => {
       const t0 = performance.now();
       const state = getState();
       const nextMap: Record<number, LeaderboardEntry> = { ...state.leaderboardMap };
+      const limit = state.maxSeatCount || 40;
 
-      for (let seat = 1; seat <= 40; seat++) {
+      for (let seat = 1; seat <= limit; seat++) {
         if (seat === state.student.seatNumber) continue;
         const sName = SAMPLE_NAMES[seat - 1] || `${seat}號同學`;
         const sNick = SAMPLE_NICKNAMES[seat] || `${sName.slice(-2)}`;

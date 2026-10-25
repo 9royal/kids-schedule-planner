@@ -219,8 +219,8 @@ export const LeaderboardPanel: React.FC<LeaderboardPanelProps> = ({
           </div>
         </div>
 
-        {/* Right Column (7 cols on lg): Active Category Leaderboard TOP 6 */}
-        <div className="lg:col-span-7 flex flex-col justify-between bg-slate-50/60 border border-slate-200/90 rounded-2xl p-4 space-y-3">
+        {/* Right Column (7 cols on lg): Active Category Leaderboard TOP 6 (由左上空間開始排列，即使只有1-2人也不會沉底) */}
+        <div className="lg:col-span-7 flex flex-col justify-start bg-slate-50/60 border border-slate-200/90 rounded-2xl p-4 space-y-3">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-2">
               <span
@@ -267,7 +267,7 @@ export const LeaderboardPanel: React.FC<LeaderboardPanelProps> = ({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 content-start items-start">
             {topList.map((entry, idx) => {
               const score = getScoreForEntry(entry, selectedCategory);
               const pct = Math.min(100, Math.round((score / maxScore) * 100));
